@@ -1,0 +1,32 @@
+# Large/temp files
+model/
+tmp/
+
+# Python
+*__pycache__*
+*.py[cod]
+*$py.class
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Environment
+.env
+.venv
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.DS_Store
+
+# Артефакты CI
+*.tar.gz
+release_notes.md
+
+# Данные и секреты
+data/
+secrets/

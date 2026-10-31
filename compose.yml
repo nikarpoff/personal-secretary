@@ -1,0 +1,64 @@
+services:
+  personal-assistant:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: personal-assistant
+    volumes:
+      - ./data/assistant:/data
+      - ./secrets:/secrets:ro
+    ports:
+      # Только локально: OpenClaw ходит по внутренней сети compose
+      - "127.0.0.1:8090:8000"
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+      start_interval: 2s
+
+  # Команды OpenClaw: scripts/openclaw.sh <команда>
+  openclaw-gateway:
+    container_name: openclaw-gateway
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    env_file:
+      - .env
+    environment:
+      HOME: /home/node
+      OPENCLAW_HOME: /home/node
+      OPENCLAW_STATE_DIR: /home/node/.openclaw
+      OPENCLAW_CONFIG_PATH: /home/node/.openclaw/openclaw.json
+      OPENCLAW_CONFIG_DIR: /home/node/.openclaw
+      OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
+      OPENCLAW_GATEWAY_PORT: "18789"
+      TZ: ${OPENCLAW_TZ:-UTC}
+    volumes:
+      - ./data/openclaw:/home/node/.openclaw
+    cap_drop:
+      - NET_RAW
+      - NET_ADMIN
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
+      - "127.0.0.1:18789:18789"
+    depends_on:
+      personal-assistant:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "dist/docker-healthcheck.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

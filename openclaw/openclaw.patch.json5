@@ -1,0 +1,49 @@
+// Патч конфига OpenClaw для ИИ-секретаря. Применение (поверх конфига после onboard):
+//   docker compose run --rm -T openclaw-cli config patch --stdin < openclaw/openclaw.patch.json5
+// Перед этим замените <YOUR_TELEGRAM_USER_ID> на свой числовой id (тот же, что TELEGRAM_CHAT_ID).
+// ${VAR} OpenClaw подставляет из окружения шлюза, то есть из .env.
+{
+  agents: {
+    defaults: {
+      // Время в системном промпте агента: тот же пояс, что TIMEZONE сервиса
+      userTimezone: "Europe/Moscow",
+    },
+  },
+  channels: {
+    telegram: {
+      enabled: true,
+      // Токен бота OpenClaw берёт из TELEGRAM_BOT_TOKEN. Отвечает только владельцу
+      dmPolicy: "allowlist",
+      allowFrom: ["<YOUR_TELEGRAM_USER_ID>"],
+    },
+  },
+  commands: {
+    // Владелец слэш-команд OpenClaw (/model, /status) - вы
+    ownerAllowFrom: ["telegram:<YOUR_TELEGRAM_USER_ID>"],
+  },
+  tools: {
+    // Секретарю не нужны shell, запись файлов и веб: чужое приглашение в календарь может нести
+    // prompt injection. messaging пропускает MCP-инструменты, read нужен для чтения SKILL.md
+    profile: "messaging",
+    alsoAllow: ["read", "group:memory"],
+  },
+  skills: {
+    entries: {
+      // Встроенный навык Google Workspace тоже умеет календарь: выключен, чтобы агент не путал источники
+      gog: { enabled: false },
+    },
+  },
+  mcp: {
+    servers: {
+      // Инструменты календаря, заметок и поиска; ключ тот же, что AUTH_TOKEN сервиса
+      "personal-assistant": {
+        url: "http://personal-assistant:8000/mcp/",
+        transport: "streamable-http",
+        requestTimeoutMs: 30000,
+        headers: {
+          Authorization: "Bearer ${AUTH_TOKEN}",
+        },
+      },
+    },
+  },
+}

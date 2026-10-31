@@ -1,0 +1,35 @@
+[project]
+name = "personal-assistant"
+version = "1.0.0"
+description = "Бэкенд ИИ-секретаря: Google Calendar, заметки и напоминания в Telegram для агента OpenClaw"
+authors = [
+    {name = "Nikita Karpov", email = "91084477+nikarpoff@users.noreply.github.com"}
+]
+requires-python = ">=3.11,<3.14"
+dependencies = [
+  # --- API --------------------------------------------------------
+  "fastapi[standard]>=0.162.0",
+  "uvicorn[standard]>=0.54.0",
+  "pydantic>=2.14.0",
+  "pydantic-settings>=2.10.0",
+  "loguru>=0.7.3",
+  "mcp>=2.3.0,<3.0.0",
+
+  # --- Upstream ---------------------------------------------------
+  "httpx>=0.28.1",
+  "google-auth[requests]>=2.62.0,<3.0.0",
+
+  # --- Core -------------------------------------------------------
+  "numpy>=2.2.0,<3.0.0",
+  "tzdata>=2026.6",
+]
+
+[dependency-groups]
+dev = [
+  # One-time Google OAuth consent: scripts/authorize_google.py
+  "google-auth-oauthlib>=1.5.0",
+  "pytest>=9.2.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
