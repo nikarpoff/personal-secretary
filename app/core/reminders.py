@@ -16,11 +16,12 @@ from typing import List, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
 from app.core.clock import iso_utc
-from app.core.entities import Event, Note, Reminder
+from app.core.entities import Event, Reminder
 
 Mark = Tuple[str, str, int]
 
 WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+DESCRIPTION_CHARS = 300             # the rest of the description is one tap away in the calendar
 
 
 def reminder_offsets(event: Event, default_minutes: Sequence[int], important_minutes: Sequence[int]) -> Tuple[int, ...]:
@@ -61,7 +62,7 @@ def due_reminders(
     return due
 
 
-def format_reminder(reminder: Reminder, notes: Sequence[Note], now: datetime, tz: ZoneInfo, max_notes: int = 3) -> str:
+def format_reminder(reminder: Reminder, now: datetime, tz: ZoneInfo) -> str:
     """Telegram HTML text of a reminder."""
     event = reminder.event
     start = event.start.astimezone(tz)
@@ -74,10 +75,10 @@ def format_reminder(reminder: Reminder, notes: Sequence[Note], now: datetime, tz
     ]
     if event.location:
         lines.append(f"📍 {html.escape(event.location)}")
-    if notes:
-        titles = ", ".join(f"«{html.escape(note.title)}»" for note in notes[:max_notes])
-        more = f" и ещё {len(notes) - max_notes}" if len(notes) > max_notes else ""
-        lines.append(f"📝 Заметки: {titles}{more}")
+    if description := " ".join(event.description.split()):
+        if len(description) > DESCRIPTION_CHARS:
+            description = description[:DESCRIPTION_CHARS - 1] + "…"
+        lines.append(f"📝 {html.escape(description)}")
     if event.html_link:
         lines.append(f'<a href="{html.escape(event.html_link, quote=True)}">Открыть в календаре</a>')
     return "\n".join(lines)

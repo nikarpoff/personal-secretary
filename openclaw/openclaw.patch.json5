@@ -1,12 +1,28 @@
-// Патч конфига OpenClaw для ИИ-секретаря. Применение (поверх конфига после onboard):
-//   docker compose run --rm -T openclaw-cli config patch --stdin < openclaw/openclaw.patch.json5
-// Перед этим замените <YOUR_TELEGRAM_USER_ID> на свой числовой id (тот же, что TELEGRAM_CHAT_ID).
-// ${VAR} OpenClaw подставляет из окружения шлюза, то есть из .env.
+// Патч конфига OpenClaw для ИИ-секретаря. Он дополняет конфиг, который создал onboard.
+// Секретов и личных данных здесь нет: ${VAR} OpenClaw подставляет из окружения шлюза (.env)
+// при каждой загрузке конфига, поэтому файл лежит в git как есть.
+//   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
 {
   agents: {
     defaults: {
-      // Время в системном промпте агента: тот же пояс, что TIMEZONE сервиса
-      userTimezone: "Europe/Moscow",
+      // LLM агента: OPENCLAW_MODEL, ключ OPENROUTER_API_KEY берётся из .env по ссылке, которую записал onboard
+      model: { primary: "${OPENCLAW_MODEL}" },
+      // Время в системном промпте агента: тот же пояс, что у сервиса
+      userTimezone: "${TIMEZONE}",
+    },
+  },
+  models: {
+    providers: {
+      openrouter: {
+        params: {
+          provider: {
+            // Только провайдеры модели, которые поддерживают все параметры запроса, в том числе tools
+            require_parameters: true,
+            // Календарь не уходит провайдерам, которые сохраняют запросы для обучения
+            data_collection: "deny",
+          },
+        },
+      },
     },
   },
   channels: {
@@ -14,20 +30,24 @@
       enabled: true,
       // Токен бота OpenClaw берёт из TELEGRAM_BOT_TOKEN. Отвечает только владельцу
       dmPolicy: "allowlist",
-      allowFrom: ["<YOUR_TELEGRAM_USER_ID>"],
+      allowFrom: ["${TELEGRAM_CHAT_ID}"],
     },
   },
   commands: {
-    // Владелец слэш-команд OpenClaw (/model, /status) - вы
-    ownerAllowFrom: ["telegram:<YOUR_TELEGRAM_USER_ID>"],
+    // Владелец слэш-команд OpenClaw (/model, /status)
+    ownerAllowFrom: ["telegram:${TELEGRAM_CHAT_ID}"],
   },
   tools: {
     // Секретарю не нужны shell, запись файлов и веб: чужое приглашение в календарь может нести
     // prompt injection. messaging пропускает MCP-инструменты, read нужен для чтения SKILL.md
     profile: "messaging",
-    alsoAllow: ["read", "group:memory"],
+    alsoAllow: ["read"],
   },
   skills: {
+    load: {
+      // Навык secretary монтируется из репозитория (compose.yml): git pull обновляет и его
+      extraDirs: ["/opt/personal-assistant/skills"],
+    },
     entries: {
       // Встроенный навык Google Workspace тоже умеет календарь: выключен, чтобы агент не путал источники
       gog: { enabled: false },
@@ -35,7 +55,7 @@
   },
   mcp: {
     servers: {
-      // Инструменты календаря, заметок и поиска; ключ тот же, что AUTH_TOKEN сервиса
+      // Инструменты календаря; ключ тот же, что AUTH_TOKEN сервиса
       "personal-assistant": {
         url: "http://personal-assistant:8000/mcp/",
         transport: "streamable-http",

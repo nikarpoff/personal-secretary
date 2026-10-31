@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import pytest
 
-from app.core.exceptions import NotFoundError, UpstreamRejectedError, UpstreamUnavailableError
+from app.core.exceptions import NotFoundError, UpstreamError, UpstreamRejectedError, UpstreamUnavailableError
 from app.core.upstream.calendar import GoogleCalendarClient, reminders_body, to_event
 
 TZ = ZoneInfo("Europe/Moscow")
@@ -20,7 +20,7 @@ def test_to_event_reads_timed_all_day_and_cancelled():
         "reminders": {"useDefault": False, "overrides": [{"method": "popup", "minutes": 10}, {"method": "email", "minutes": 60}]},
         "recurringEventId": "series", "created": "2026-10-01T08:00:00.000Z",
     }, TZ, "11")
-    assert (timed.title, timed.important, timed.own_reminders, timed.series_id) == ("Стендап", True, (60, 10), "series")
+    assert (timed.title, timed.important, timed.own_reminders, timed.recurring_event_id) == ("Стендап", True, (60, 10), "series")
     assert timed.start.isoformat() == "2026-11-03T10:00:00+03:00"
 
     all_day = to_event({"id": "b", "start": {"date": "2026-11-05"}, "end": {"date": "2026-11-06"}}, TZ, "11")
@@ -89,3 +89,19 @@ def test_client_pages_through_the_list():
             await client.aclose()
 
     assert [item["id"] for item in asyncio.run(scenario())] == ["1", "2"]
+
+
+def test_client_explains_an_oauth_client_file(tmp_path: Path):
+    client_file = tmp_path / "client_secret.json"
+    client_file.write_text('{"installed": {"client_id": "x", "client_secret": "y"}}')
+
+    async def scenario():
+        client = GoogleCalendarClient(client_file, "primary")
+        try:
+            await client.startup()
+        finally:
+            await client.aclose()
+
+    with pytest.raises(UpstreamError) as exc_info:
+        asyncio.run(scenario())
+    assert "scripts/authorize_google.py" in str(exc_info.value)

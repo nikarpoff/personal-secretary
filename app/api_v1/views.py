@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import (
     APIRouter,
@@ -15,15 +15,9 @@ from app.api_v1.schemas import (
     EventInfo,
     EventListResponse,
     EventUpdateRequest,
-    NoteCreateRequest,
-    NoteInfo,
-    NoteListResponse,
-    NoteUpdateRequest,
-    SearchResponse,
 )
 from app.core.auth import verify_token
 from app.core.engine import AssistantEngine
-from app.core.entities import ItemKind
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_token)])
 
@@ -43,8 +37,6 @@ def get_engine(request: Request) -> AssistantEngine:
     raise HTTPException(500, "service is not initialized")
 
 
-# ---- events ----------------------------------------------------------------
-
 @router.get("/events",
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Bad range bounds"},
@@ -58,7 +50,7 @@ async def list_events(
     limit: int = Query(100, ge=1, le=500, description="Сколько событий вернуть"),
     engine: AssistantEngine = Depends(get_engine),
 ) -> EventListResponse:
-    """Events of a range with their notes"""
+    """Events of a range"""
     return await engine.list_events(start, end, q, limit)
 
 
@@ -105,83 +97,3 @@ async def delete_event(
     """Deleting an event; the series id deletes the whole series"""
     await engine.delete_event(event_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ---- notes -----------------------------------------------------------------
-
-@router.get("/notes")
-async def list_notes(
-    tag: Optional[str] = Query(None, description="Только заметки с этим тегом"),
-    event_id: Optional[str] = Query(None, description="Только заметки к этому событию"),
-    limit: int = Query(50, ge=1, le=500, description="Сколько заметок вернуть"),
-    engine: AssistantEngine = Depends(get_engine),
-) -> NoteListResponse:
-    """The latest notes"""
-    return await engine.list_notes(tag, event_id, limit)
-
-
-@router.post("/notes", status_code=status.HTTP_201_CREATED,
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"description": "Empty note"},
-        status.HTTP_404_NOT_FOUND: {"description": "No event with the linked id"},
-    },
-)
-async def add_note(
-    body: NoteCreateRequest,
-    engine: AssistantEngine = Depends(get_engine),
-) -> NoteInfo:
-    """Adding a note"""
-    return await engine.add_note(body)
-
-
-@router.get("/notes/{note_id}",
-    responses={status.HTTP_404_NOT_FOUND: {"description": "No note with this id"}},
-)
-async def get_note(
-    note_id: int,
-    engine: AssistantEngine = Depends(get_engine),
-) -> NoteInfo:
-    """A note by id"""
-    return await engine.get_note(note_id)
-
-
-@router.patch("/notes/{note_id}",
-    responses={
-        status.HTTP_400_BAD_REQUEST: {"description": "Empty note"},
-        status.HTTP_404_NOT_FOUND: {"description": "No note or linked event with this id"},
-    },
-)
-async def update_note(
-    note_id: int,
-    body: NoteUpdateRequest,
-    engine: AssistantEngine = Depends(get_engine),
-) -> NoteInfo:
-    """Changing a note"""
-    return await engine.update_note(note_id, body)
-
-
-@router.delete("/notes/{note_id}", status_code=status.HTTP_204_NO_CONTENT,
-    responses={status.HTTP_404_NOT_FOUND: {"description": "No note with this id"}},
-)
-async def delete_note(
-    note_id: int,
-    engine: AssistantEngine = Depends(get_engine),
-) -> Response:
-    """Deleting a note"""
-    await engine.delete_note(note_id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-
-# ---- knowledge base --------------------------------------------------------
-
-@router.get("/search",
-    responses={status.HTTP_400_BAD_REQUEST: {"description": "Empty query"}},
-)
-async def search(
-    q: str = Query(..., description="Что искать: слова или смысл"),
-    kind: Optional[List[ItemKind]] = Query(None, description="Где искать: note, event; по умолчанию везде"),
-    limit: int = Query(10, ge=1, le=50, description="Сколько результатов вернуть"),
-    engine: AssistantEngine = Depends(get_engine),
-) -> SearchResponse:
-    """Search over notes and events by words and by meaning"""
-    return await engine.search(q, kind, limit)

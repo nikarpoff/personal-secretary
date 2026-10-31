@@ -7,10 +7,11 @@ refreshes the access token: the refresh is blocking, so it runs in a thread unde
 """
 
 import asyncio
+import json
 
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 from zoneinfo import ZoneInfo
 
@@ -134,12 +135,19 @@ class GoogleCalendarClient:
 
     async def startup(self) -> None:
         try:
-            self._credentials, _ = await asyncio.to_thread(
-                google.auth.load_credentials_from_file, str(self._credentials_file), scopes=list(CFG.SCOPES)
-            )
+            self._credentials, _ = await asyncio.to_thread(self._load_credentials)
         except (OSError, GoogleAuthError, ValueError) as e:
+            logger.error("Bad configuration: GOOGLE_CREDENTIALS_FILE '{}': {}", self._credentials_file, e)
             raise UpstreamError(f"Can not load credentials '{self._credentials_file}': {e}", service=SERVICE) from e
         logger.info("Google Calendar client ready: calendar '{}'", self._calendar_id)
+
+    def _load_credentials(self) -> Tuple[Any, Optional[str]]:
+        """Blocking: reads the credentials file."""
+        info = json.loads(self._credentials_file.read_text())
+        # The OAuth client file is the input of the consent, not a token: an easy one to mix up
+        if "installed" in info or "web" in info:
+            raise ValueError("this is an OAuth client file, not a token: pass it to scripts/authorize_google.py --client")
+        return google.auth.load_credentials_from_dict(info, scopes=list(CFG.SCOPES))
 
     async def aclose(self) -> None:
         await self._http.aclose()

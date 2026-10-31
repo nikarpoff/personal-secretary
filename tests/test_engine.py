@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.api_v1.schemas import EventCreateRequest, EventUpdateRequest, NoteCreateRequest
+from app.api_v1.schemas import EventCreateRequest, EventUpdateRequest
 from app.core import engine as engine_module
 from app.core.config import Settings
 from app.core.engine import AssistantEngine
@@ -22,7 +22,6 @@ def settings(tmp_path: Path) -> Settings:
         GOOGLE_CREDENTIALS_FILE=tmp_path / "google.json",
         TELEGRAM_BOT_TOKEN="123:abc",
         TELEGRAM_CHAT_ID=42,
-        OPENAI_API_KEY=None,
     )
 
 
@@ -48,13 +47,15 @@ def _local(settings: Settings, minutes: int) -> str:
     return (datetime.now(settings.tz) + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
 
 
-def test_event_reminder_goes_out_once_with_linked_notes(settings, monkeypatch):
+def test_event_reminder_goes_out_once(settings, monkeypatch):
     async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
         # The background loop would race the checks below
         await engine._scheduler.stop()
 
-        event = await engine.create_event(EventCreateRequest(title="Созвон с Петром", start=_local(settings, 11), location="Zoom"))
-        await engine.add_note(NoteCreateRequest(content="Спросить про бюджет", event_id=event.id))
+        await engine.create_event(EventCreateRequest(
+            title="Созвон с Петром", start=_local(settings, 11), location="Zoom", description="Спросить про бюджет",
+        ))
+        await engine._scheduler.sync_calendar()
 
         assert await engine._scheduler.send_due_reminders() == 1
         assert await engine._scheduler.send_due_reminders() == 0
@@ -64,7 +65,7 @@ def test_event_reminder_goes_out_once_with_linked_notes(settings, monkeypatch):
         assert "<b>Созвон с Петром</b>" in message
         assert "через 1" in message
         assert "📍 Zoom" in message
-        assert "«Спросить про бюджет»" in message
+        assert "📝 Спросить про бюджет" in message
 
     _run(settings, monkeypatch, scenario)
 
@@ -125,9 +126,15 @@ def test_create_event_rejects_bad_times(settings, monkeypatch, start, end):
     _run(settings, monkeypatch, scenario)
 
 
-def test_note_linked_to_missing_event_is_rejected(settings, monkeypatch):
+def test_deleted_event_gets_no_reminder(settings, monkeypatch):
     async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
-        with pytest.raises(NotFoundError):
-            await engine.add_note(NoteCreateRequest(content="текст", event_id="nope"))
+        await engine._scheduler.stop()
+
+        event = await engine.create_event(EventCreateRequest(title="Отменится", start=_local(settings, 11)))
+        await engine.delete_event(event.id)
+        await engine._scheduler.sync_calendar()
+
+        assert await engine._scheduler.send_due_reminders() == 0
+        assert telegram.messages == []
 
     _run(settings, monkeypatch, scenario)

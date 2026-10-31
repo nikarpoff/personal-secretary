@@ -1,7 +1,7 @@
 [project]
 name = "personal-assistant"
 version = "1.0.0"
-description = "Бэкенд ИИ-секретаря: Google Calendar, заметки и напоминания в Telegram для агента OpenClaw"
+description = "Бэкенд ИИ-секретаря: Google Calendar и напоминания в Telegram для агента OpenClaw"
 authors = [
     {name = "Nikita Karpov", email = "91084477+nikarpoff@users.noreply.github.com"}
 ]
@@ -20,7 +20,6 @@ dependencies = [
   "google-auth[requests]>=2.62.0,<3.0.0",
 
   # --- Core -------------------------------------------------------
-  "numpy>=2.2.0,<3.0.0",
   "tzdata>=2026.6",
 ]
 
