@@ -1,43 +1,41 @@
 """
-Background loop of the assistant.
+Google Calendar polling and Telegram reminders.
 
-Every tick it sends the reminders that came due; every CALENDAR_SYNC_INTERVAL it first
-mirrors the calendar window into the knowledge base, and embeds what is new. A failed
-step is logged and retried on the next tick: an unsent reminder is not marked as sent.
+Events and sent-reminder marks live only in memory. Restarting the process clears
+these marks, so reminders for upcoming events may be sent again after a restart.
 """
 
 import asyncio
 
 from datetime import datetime, timedelta
-from typing import Optional
+from typing import Dict, Optional, Set
 
 from loguru import logger
 
-from app.core.clock import utc_now
+from app.core.clock import iso_utc, utc_now
 from app.core.config import CALENDAR_SETTINGS, REMINDER_SETTINGS as CFG, Settings
 from app.core.exceptions import AppError
-from app.core.knowledge import KnowledgeRepository, KnowledgeSearch
-from app.core.reminders import due_reminders, format_reminder
+from app.core.entities import Event
+from app.core.reminders import Mark, due_reminders, format_reminder
 from app.core.upstream import GoogleCalendarClient, TelegramClient
 from app.core.upstream.calendar import to_event
 
 
 class ReminderScheduler:
-    """Mirrors the calendar, sends due reminders to Telegram, indexes new items"""
+    """Fetches Google Calendar events and sends reminders without local storage."""
 
     def __init__(
         self,
         settings: Settings,
-        repository: KnowledgeRepository,
-        knowledge: KnowledgeSearch,
         calendar: Optional[GoogleCalendarClient],
         telegram: Optional[TelegramClient],
     ) -> None:
         self.settings = settings
-        self._repository = repository
-        self._knowledge = knowledge
         self._calendar = calendar
         self._telegram = telegram
+        self._events: Dict[str, Event] = {}
+        self._sent: Set[Mark] = set()
+        self._revision = 0
 
         self._wake = asyncio.Event()
         self._task: Optional[asyncio.Task] = None
@@ -60,13 +58,31 @@ class ReminderScheduler:
             pass
 
     def request_sync(self) -> None:
-        """Mirror the calendar on the next tick, without waiting for the interval."""
+        """Read Google Calendar on the next tick, without waiting for the interval."""
         self._sync_requested = True
         self._wake.set()
 
+    def event_changed(self, event: Event, *, recurring: bool = False) -> None:
+        """Apply a local change immediately; Google expands recurring series on refresh."""
+        if recurring:
+            self.remove_event(event.id)
+        else:
+            self._events[event.id] = event
+            self._revision += 1
+            self.request_sync()
+
+    def remove_event(self, event_id: str) -> None:
+        """Forget an event or all cached occurrences of a deleted/changed series."""
+        self._events = {
+            key: event for key, event in self._events.items()
+            if event.id != event_id and event.recurring_event_id != event_id
+        }
+        self._revision += 1
+        self.request_sync()
+
     async def _run(self) -> None:
         logger.info(
-            "Scheduler started: sync every {}s, reminders {} min, important +{} min",
+            "Scheduler started: calendar polling every {}s, reminders {} min, important +{} min",
             self.settings.CALENDAR_SYNC_INTERVAL,
             self.settings.REMINDER_MINUTES,
             self.settings.IMPORTANT_REMINDER_MINUTES,
@@ -83,13 +99,14 @@ class ReminderScheduler:
         now = utc_now()
         interval = timedelta(seconds=self.settings.CALENDAR_SYNC_INTERVAL)
 
-        # 1. Firstly, refresh the mirror: reminders are computed from it
-        if self._calendar is not None and (self._sync_requested or now - self._last_sync >= interval):
+        # Refresh the in-memory cache before checking reminders.
+        if self._calendar is not None and (
+            self._sync_requested or self._last_sync is None or now - self._last_sync >= interval
+        ):
             # Cleared before the sync: a request made while it runs gets its own sync
             self._sync_requested = False
             try:
                 await self.sync_calendar()
-                self._last_sync = now
             except AppError as e:
                 self._sync_requested = True
                 logger.warning("Calendar sync failed: {}", e)
@@ -103,17 +120,12 @@ class ReminderScheduler:
         except Exception as e:
             logger.opt(exception=e).error("Reminders check crashed")
 
-        # 3. Embed new and changed items, search works on keywords meanwhile
-        try:
-            await self._knowledge.index_pending()
-        except AppError as e:
-            logger.warning("Indexing postponed: {}", e)
-        except Exception as e:
-            logger.opt(exception=e).error("Indexing crashed")
-
     async def sync_calendar(self) -> None:
-        """Mirror of the window [now - PAST_DAYS, now + CALENDAR_SYNC_DAYS]."""
+        """Replace the memory cache only after a complete, successful Google read."""
+        if self._calendar is None:
+            return
         async with self._sync_lock:
+            revision = self._revision
             now = utc_now()
             time_min = now - timedelta(days=CALENDAR_SETTINGS.PAST_DAYS)
             time_max = now + timedelta(days=self.settings.CALENDAR_SYNC_DAYS)
@@ -123,9 +135,13 @@ class ReminderScheduler:
                 event for item in items
                 if (event := to_event(item, self.settings.tz, self.settings.IMPORTANT_COLOR_ID)) is not None
             ]
-            changed, removed = await self._repository.replace_window(events, time_min, time_max)
-            if changed or removed:
-                logger.info("Calendar synced: {} events, {} changed, {} removed", len(events), changed, removed)
+            # An older response must not undo an event changed/deleted during the read.
+            if revision != self._revision:
+                self.request_sync()
+                return
+            self._events = {event.id: event for event in events}
+            self._last_sync = utc_now()
+            logger.debug("Calendar refreshed: {} events in memory", len(events))
 
     async def send_due_reminders(self) -> int:
         """Sends the due reminders; returns how many went out."""
@@ -134,22 +150,18 @@ class ReminderScheduler:
 
     async def _send_due_reminders(self) -> int:
         now = utc_now()
-        offsets = self.settings.REMINDER_MINUTES + self.settings.IMPORTANT_REMINDER_MINUTES
-        if not offsets:
-            return 0
-
-        horizon = now + timedelta(minutes=max(offsets) + 1)
-        events = await self._repository.events_starting(now, horizon)
-        sent = await self._repository.sent_marks([event.id for event in events])
+        events = list(self._events.values())
+        # Keep future marks through cache refreshes and temporary removal of a series.
+        cutoff = iso_utc(now)
+        self._sent = {mark for mark in self._sent if mark[1] > cutoff}
         reminders = due_reminders(
-            events, sent, now, self.settings.REMINDER_MINUTES, self.settings.IMPORTANT_REMINDER_MINUTES
+            events, self._sent, now, self.settings.REMINDER_MINUTES, self.settings.IMPORTANT_REMINDER_MINUTES
         )
 
         delivered = 0
         for reminder in reminders:
             event = reminder.event
-            notes = await self._repository.list_notes(None, [event.id, event.series_id], CFG.MAX_NOTES_SHOWN + 1)
-            text = format_reminder(reminder, notes, now, self.settings.tz, CFG.MAX_NOTES_SHOWN)
+            text = format_reminder(reminder, now, self.settings.tz)
 
             if self._telegram is None:
                 logger.info("Reminder (Telegram is off) for event '{}': {} min", event.id, reminder.minutes)
@@ -161,9 +173,7 @@ class ReminderScheduler:
                     continue
                 logger.info("Reminder sent for event '{}': {} min before", event.id, reminder.minutes)
 
-            await self._repository.mark_sent(reminder.marks, now)
+            self._sent.update(reminder.marks)
             delivered += 1
 
-        # Marks of long past events are of no use
-        await self._repository.purge_marks(now - timedelta(days=CFG.SENT_RETENTION_DAYS))
         return delivered

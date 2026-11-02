@@ -25,7 +25,7 @@
     // Секретарю не нужны shell, запись файлов и веб: чужое приглашение в календарь может нести
     // prompt injection. messaging пропускает MCP-инструменты, read нужен для чтения SKILL.md
     profile: "messaging",
-    alsoAllow: ["read", "group:memory"],
+    alsoAllow: ["read"],
   },
   skills: {
     entries: {
@@ -35,7 +35,7 @@
   },
   mcp: {
     servers: {
-      // Инструменты календаря, заметок и поиска; ключ тот же, что AUTH_TOKEN сервиса
+      // Четыре инструмента Google Calendar; ключ тот же, что AUTH_TOKEN сервиса
       "personal-assistant": {
         url: "http://personal-assistant:8000/mcp/",
         transport: "streamable-http",

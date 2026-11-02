@@ -1,13 +1,11 @@
 from datetime import datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 
 import pytest
 
 from app.core.clock import iso_utc
-from app.core.entities import Event, Note
-from app.core.reminders import due_reminders, format_reminder, reminder_offsets
+from app.core.entities import Event
+from app.core.reminders import due_reminders, reminder_offsets
 
-TZ = ZoneInfo("Europe/Moscow")
 NOW = datetime(2026, 11, 2, 9, 0, tzinfo=timezone.utc)
 
 
@@ -79,17 +77,3 @@ def test_due_reminders_new_start_fires_again():
     sent = {(event.id, iso_utc(moved_from), 15)}
 
     assert [r.minutes for r in _due([event], sent)] == [15]
-
-
-def test_format_reminder_escapes_and_lists_notes():
-    event = _event(10, important=True, location="Zoom", html_link="https://calendar.google.com/e?a=1&b=2")
-    reminder = _due([event])[0]
-    notes = [Note(id=i, title=f"Заметка {i}", content="...") for i in range(5)]
-
-    text = format_reminder(reminder, notes, NOW, TZ, max_notes=3)
-
-    assert text.startswith("❗️ <b>Созвон &lt;команды&gt;</b>")
-    assert "через 10 мин · сегодня 12:10–13:10" in text
-    assert "📍 Zoom" in text
-    assert "«Заметка 2» и ещё 2" in text
-    assert "a=1&amp;b=2" in text

@@ -2,19 +2,12 @@
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
 from typing import Optional, Tuple
-
-
-class ItemKind(StrEnum):
-    """What a knowledge base item is"""
-    NOTE = "note"
-    EVENT = "event"
 
 
 @dataclass(frozen=True)
 class Event:
-    """Calendar event as the mirror keeps it; times are timezone-aware"""
+    """Google Calendar event; times are timezone-aware."""
     id: str
     title: str
     start: datetime
@@ -30,31 +23,8 @@ class Event:
 
     @property
     def series_id(self) -> str:
-        """Id the notes of any occurrence are linked to."""
+        """Series identifier for an occurrence, or the event's own identifier."""
         return self.recurring_event_id or self.id
-
-
-@dataclass(frozen=True)
-class Note:
-    """Free-form note of the owner, optionally linked to an event"""
-    id: int
-    title: str
-    content: str
-    tags: Tuple[str, ...] = ()
-    event_id: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-
-@dataclass(frozen=True)
-class SearchHit:
-    """Knowledge base item found by a query"""
-    kind: ItemKind
-    ref: str                        # note id or event id
-    title: str
-    snippet: str
-    when: Optional[datetime]        # event start or note update
-    score: float
 
 
 @dataclass(frozen=True)

@@ -1,5 +1,5 @@
 """
-Time parsing for the agent: it speaks in the owner's local time, Google and the mirror keep offsets
+Time parsing for the agent: it speaks in the owner's local time, Google keeps offsets.
 """
 
 import re

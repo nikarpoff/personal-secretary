@@ -16,6 +16,12 @@ model/
 tmp/
 data/
 secrets/
+client_secret*.json
+google.json
+credentials.json
+token.json
+service_account*.json
+service-account*.json
 tests/
 scripts/
 openclaw/

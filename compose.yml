@@ -5,7 +5,6 @@ services:
       dockerfile: Dockerfile
     container_name: personal-assistant
     volumes:
-      - ./data/assistant:/data
       - ./secrets:/secrets:ro
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose

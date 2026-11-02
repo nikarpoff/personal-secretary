@@ -1,11 +1,10 @@
 import asyncio
 
-from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
-from app.api_v1.schemas import EventCreateRequest, EventUpdateRequest, NoteCreateRequest
+from app.api_v1.schemas import EventCreateRequest, EventUpdateRequest
 from app.core import engine as engine_module
 from app.core.config import Settings
 from app.core.engine import AssistantEngine
@@ -17,12 +16,10 @@ from tests.fakes import FakeCalendar, FakeTelegram
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         _env_file=None,
-        DATA_DIR=tmp_path,
         TIMEZONE="Europe/Moscow",
         GOOGLE_CREDENTIALS_FILE=tmp_path / "google.json",
         TELEGRAM_BOT_TOKEN="123:abc",
         TELEGRAM_CHAT_ID=42,
-        OPENAI_API_KEY=None,
     )
 
 
@@ -41,32 +38,6 @@ def _run(settings: Settings, monkeypatch: pytest.MonkeyPatch, scenario) -> None:
             await engine.shutdown()
 
     asyncio.run(wrapper())
-
-
-def _local(settings: Settings, minutes: int) -> str:
-    """Naive local time string, as the agent passes it."""
-    return (datetime.now(settings.tz) + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
-
-
-def test_event_reminder_goes_out_once_with_linked_notes(settings, monkeypatch):
-    async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
-        # The background loop would race the checks below
-        await engine._scheduler.stop()
-
-        event = await engine.create_event(EventCreateRequest(title="Созвон с Петром", start=_local(settings, 11), location="Zoom"))
-        await engine.add_note(NoteCreateRequest(content="Спросить про бюджет", event_id=event.id))
-
-        assert await engine._scheduler.send_due_reminders() == 1
-        assert await engine._scheduler.send_due_reminders() == 0
-
-        assert len(telegram.messages) == 1
-        message = telegram.messages[0]
-        assert "<b>Созвон с Петром</b>" in message
-        assert "через 1" in message
-        assert "📍 Zoom" in message
-        assert "«Спросить про бюджет»" in message
-
-    _run(settings, monkeypatch, scenario)
 
 
 def test_event_update_keeps_duration_and_important_adds_reminders(settings, monkeypatch):
@@ -121,13 +92,5 @@ def test_create_event_rejects_bad_times(settings, monkeypatch, start, end):
         with pytest.raises(InvalidRequestError):
             await engine.create_event(EventCreateRequest(title="x", start=start, end=end))
         assert calendar.items == {}
-
-    _run(settings, monkeypatch, scenario)
-
-
-def test_note_linked_to_missing_event_is_rejected(settings, monkeypatch):
-    async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
-        with pytest.raises(NotFoundError):
-            await engine.add_note(NoteCreateRequest(content="текст", event_id="nope"))
 
     _run(settings, monkeypatch, scenario)

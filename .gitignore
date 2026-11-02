@@ -30,3 +30,9 @@ release_notes.md
 # Данные и секреты
 data/
 secrets/
+client_secret*.json
+google.json
+credentials.json
+token.json
+service_account*.json
+service-account*.json

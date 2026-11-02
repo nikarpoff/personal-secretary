@@ -11,14 +11,13 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 class Settings(BaseSettings):
     # 1. Backend settings
     AUTH_TOKEN: Optional[str] = Field(None, description="Bearer token of the REST API and the MCP endpoint; auth is off when unset")
-    DATA_DIR: Path = Field(Path("/data"), description="Directory of the SQLite knowledge base")
     TIMEZONE: str = Field("Europe/Moscow", description="IANA timezone of the owner: times without an offset are read in it")
 
     # 2. Google Calendar
     GOOGLE_CREDENTIALS_FILE: Optional[Path] = Field(None, description="authorized_user (scripts/authorize_google.py) or service_account JSON; calendar tools are off when unset")
     GOOGLE_CALENDAR_ID: str = Field("primary", description="Calendar the assistant works with; a service account needs the owner's e-mail here")
-    CALENDAR_SYNC_INTERVAL: int = Field(60, ge=10, description="Seconds between two mirrors of the calendar window into the knowledge base")
-    CALENDAR_SYNC_DAYS: int = Field(30, ge=2, description="Days ahead the mirror covers; reminders fire only for mirrored events")
+    CALENDAR_SYNC_INTERVAL: int = Field(60, ge=10, description="Seconds between reads of Google Calendar for reminders")
+    CALENDAR_SYNC_DAYS: int = Field(30, ge=2, description="Days ahead to fetch from Google Calendar for reminders")
     IMPORTANT_COLOR_ID: str = Field("11", description="Google event color that marks an important event; 11 is Tomato (red)")
 
     # 3. Telegram reminders
@@ -27,13 +26,7 @@ class Settings(BaseSettings):
     REMINDER_MINUTES: Annotated[List[int], NoDecode] = Field([15], description="Minutes before start for events with default Google notifications, comma-separated")
     IMPORTANT_REMINDER_MINUTES: Annotated[List[int], NoDecode] = Field([1440, 120], description="Extra reminders of important events, comma-separated")
 
-    # 4. Knowledge base search
-    OPENAI_API_KEY: Optional[str] = Field(None, description="Key for embeddings; search is full-text only when unset")
-    OPENAI_BASE_URL: str = Field("https://api.openai.com/v1", description="OpenAI-compatible API root")
-    EMBEDDING_MODEL: str = Field("text-embedding-3-small", description="Embedding model of the semantic search")
-    EMBEDDING_DIMENSIONS: int = Field(512, ge=64, description="Embedding size; changing it re-indexes the knowledge base")
-
-    # 5. Logging settings
+    # 4. Logging settings
     LOG_LEVEL: Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"] = Field("INFO", description="Minimum level a message needs to be logged")
     LOG_DIAGNOSE: bool = Field(False, description="Add variable values to logged tracebacks; debug only - request payloads and auth tokens end up in the logs")
 
@@ -69,16 +62,8 @@ class Settings(BaseSettings):
         return ZoneInfo(self.TIMEZONE)
 
     @property
-    def database_path(self) -> Path:
-        return self.DATA_DIR / "assistant.db"
-
-    @property
     def calendar_enabled(self) -> bool:
         return self.GOOGLE_CREDENTIALS_FILE is not None
-
-    @property
-    def embeddings_enabled(self) -> bool:
-        return bool(self.OPENAI_API_KEY)
 
     # An empty variable keeps the default
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")

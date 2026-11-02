@@ -72,7 +72,7 @@ class GoogleEvent(BaseModel):
 
 
 def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Optional[Event]:
-    """Mirror entity of a Google event; None for a cancelled one."""
+    """Calendar entity of a Google event; None for a cancelled one."""
     google = GoogleEvent.model_validate(item)
     if google.status == "cancelled":
         return None

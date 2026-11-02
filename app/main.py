@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter
 
-from app.api_v1 import router
+from app.api_v1.views import router
 from app.api_v1.errors import register_error_handlers
 from app.api_v1.tools import McpEndpoint
 from app.core.auth import BearerTokenMiddleware
