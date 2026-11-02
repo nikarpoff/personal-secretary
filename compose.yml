@@ -4,47 +4,17 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: personal-assistant
+    env_file: .env
     volumes:
       - ./secrets:/secrets:ro
-      # Only Secretary is visible to the backend; the full vault is never mounted here.
-      - type: bind
-        source: ${OBSIDIAN_VAULT_DIR:-./data/obsidian}/Secretary
-        target: /notes
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./data/assistant-state
-        target: /assistant-state
-        bind:
-          create_host_path: false
+      # Secretary is the assistant's scope; Personal stays outside the backend.
+      - ./data/obsidian/Secretary:/notes
+      - ./data/assistant-state:/assistant-state
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
       - "127.0.0.1:8090:8000"
-    environment:
-      # .env is used by Compose interpolation; each process receives only its own keys.
-      AUTH_TOKEN: ${AUTH_TOKEN:-}
-      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
-      GOOGLE_CREDENTIALS_FILE: ${GOOGLE_CREDENTIALS_FILE:-}
-      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-primary}
-      CALENDAR_SYNC_INTERVAL: ${CALENDAR_SYNC_INTERVAL:-60}
-      CALENDAR_SYNC_DAYS: ${CALENDAR_SYNC_DAYS:-30}
-      IMPORTANT_COLOR_ID: ${IMPORTANT_COLOR_ID:-11}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      REMINDER_MINUTES: ${REMINDER_MINUTES:-15}
-      IMPORTANT_REMINDER_MINUTES: ${IMPORTANT_REMINDER_MINUTES:-1440,120}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      LOG_DIAGNOSE: ${LOG_DIAGNOSE:-False}
-      NOTES_ROOT: /notes
-      ASSISTANT_STATE_DIR: /assistant-state
-      OBSIDIAN_VAULT_NAME: ${OBSIDIAN_VAULT_NAME:-Obsidian}
-      NOTE_REMINDER_POLL_SECONDS: ${NOTE_REMINDER_POLL_SECONDS:-30}
-      HTTPS_PROXY: ${HTTPS_PROXY:-}
-      HTTP_PROXY: ${HTTP_PROXY:-}
-      ALL_PROXY: ${ALL_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-personal-assistant,localhost,127.0.0.1}
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      host.docker.internal: host-gateway
     restart: unless-stopped
     # Let an in-flight task delivery finish and persist its acknowledgement.
     stop_grace_period: 30s
@@ -80,15 +50,8 @@ services:
   openclaw-gateway:
     container_name: openclaw-gateway
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    env_file: .env
     environment:
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-      OPENCLAW_MODEL: ${OPENCLAW_MODEL:-openrouter/anthropic/claude-haiku-5.5}
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
-      AUTH_TOKEN: ${AUTH_TOKEN:-}
       HOME: /home/node
       OPENCLAW_HOME: /home/node
       OPENCLAW_STATE_DIR: /home/node/.openclaw
@@ -96,18 +59,10 @@ services:
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_PORT: "18789"
-      TZ: ${OPENCLAW_TZ:-UTC}
-      WHISPER_URL: ${WHISPER_URL:-https://whisper.a16.ainergy.pro:8443/v1/audio/transcriptions}
-      WHISPER_MODEL: ${WHISPER_MODEL:-whisper-1}
-      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
-      WHISPER_API_KEY: ${WHISPER_API_KEY:-}
-      HTTPS_PROXY: ${HTTPS_PROXY:-}
-      HTTP_PROXY: ${HTTP_PROXY:-}
-      ALL_PROXY: ${ALL_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-personal-assistant,localhost,127.0.0.1}
     volumes:
       - ./data/openclaw:/home/node/.openclaw
       - ./openclaw/whisper/transcribe.mjs:/opt/secretary/transcribe-whisper.mjs:ro
+      - ./scripts/render_openclaw_config.mjs:/opt/personal-assistant/render-config.mjs:ro
       # Native workspace skill loading keeps read access within tools.fs.workspaceOnly.
       - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:
@@ -118,7 +73,7 @@ services:
     init: true
     command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      host.docker.internal: host-gateway
     ports:
       # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
       - "127.0.0.1:18789:18789"
@@ -136,24 +91,18 @@ services:
       start_period: 20s
 
   # Optional HTTPS WebDAV endpoint for Obsidian Remotely Save.
-  # Enable only after following docs/obsidian.md (domain, auth file, backup).
+  # Configure the domain and secrets/webdav.env as described in docs/obsidian.md.
   obsidian-webdav:
     profiles: [obsidian-sync]
     build:
       context: ./deploy/webdav
+    env_file:
+      - path: ./secrets/webdav.env
+        required: false
+    environment:
+      OBSIDIAN_VAULT_NAME: ${OBSIDIAN_VAULT_NAME:-Obsidian}
     volumes:
-      # Remotely Save adds /<vault-name>/ to its endpoint. Mount at that exact path.
-      - type: bind
-        source: ${OBSIDIAN_VAULT_DIR:-./data/obsidian}
-        target: /var/lib/dav/${OBSIDIAN_VAULT_NAME:-Obsidian}
-        bind:
-          create_host_path: false
-      - type: bind
-        source: ./data/webdav/private/webdav.yaml
-        target: /etc/wsgidav.yaml
-        read_only: true
-        bind:
-          create_host_path: false
+      - ./data/obsidian:/var/lib/dav
     expose:
       - "8080"
     networks: [obsidian-sync]
@@ -161,6 +110,8 @@ services:
     tmpfs:
       - /tmp:size=16m,mode=1777
     cap_drop: [ALL]
+    # Host vault directories may belong to the deploy user.
+    cap_add: [DAC_OVERRIDE]
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped

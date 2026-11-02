@@ -1,84 +1,39 @@
-"""Small, bounded Markdown/frontmatter contract shared by notes and reminders."""
+"""Validated note metadata; Markdown remains the source of truth."""
 
 from __future__ import annotations
 
-import hashlib
 import re
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-import yaml
-from yaml.events import AliasEvent
+from pydantic import (
+    AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, TypeAdapter,
+    ValidationError, ValidationInfo, field_validator, model_validator,
+)
 
-from app.core.clock import parse_moment
 from app.core.exceptions import AppError, InvalidRequestError
+from app.utils.time import parse_timestamp as timestamp
 
 KINDS = frozenset({"note", "task", "idea", "knowledge", "person"})
 STATUSES = frozenset({"open", "done", "cancelled", "archived"})
 DIRECTORIES = {"note": "Inbox", "task": "Tasks", "idea": "Ideas", "knowledge": "Knowledge", "person": "People"}
 ALLOWED_DIRECTORIES = frozenset({*DIRECTORIES.values(), "Archive"})
-MAX_ALIASES = 8
-MAX_ALIAS_CHARS = 80
-MAX_PEOPLE = 10
-MAX_NOTE_BYTES = 128 * 1024
-MAX_BODY_CHARS = 32_000
-MAX_FRONTMATTER_BYTES = 8 * 1024
-MAX_RESULTS = 5
-MAX_READ_CHARS = 4_000
-MAX_SNIPPET_CHARS = 240
-MAX_FILES = 5_000
-MAX_DEPTH = 8
-TAG = re.compile(r"^[\w/-]{1,40}$", re.UNICODE)
+MAX_ALIASES, MAX_ALIAS_CHARS, MAX_PEOPLE = 8, 80, 10
+MAX_NOTE_BYTES, MAX_BODY_CHARS, MAX_FRONTMATTER_BYTES = 128 * 1024, 32_000, 8 * 1024
+MAX_RESULTS, MAX_READ_CHARS, MAX_SNIPPET_CHARS = 5, 4_000, 240
+MAX_FILES, MAX_DEPTH = 5_000, 8
 VERSION = re.compile(r"^[0-9a-f]{64}$")
 
 
 class NotesUnavailableError(AppError):
-    status_code = 503
-    public = True
+    status_code, public = 503, True
 
 
 class NotesConflictError(AppError):
-    status_code = 409
-    public = True
-
-
-class FrontmatterLoader(yaml.SafeLoader):
-    """No aliases, duplicate keys, timestamp coercion or unbounded YAML nesting."""
-
-    yaml_implicit_resolvers = {
-        key: [(tag, regexp) for tag, regexp in values if tag != "tag:yaml.org,2002:timestamp"]
-        for key, values in yaml.SafeLoader.yaml_implicit_resolvers.items()
-    }
-
-    def __init__(self, stream: str) -> None:
-        super().__init__(stream)
-        self._depth = 0
-        self._nodes = 0
-
-    def compose_node(self, parent: Any, index: Any) -> Any:
-        if self.check_event(AliasEvent):
-            raise ValueError("YAML aliases are not supported")
-        self._depth += 1
-        self._nodes += 1
-        try:
-            if self._depth > 6 or self._nodes > 200:
-                raise ValueError("Frontmatter is too complex")
-            return super().compose_node(parent, index)
-        finally:
-            self._depth -= 1
-
-    def construct_mapping(self, node: Any, deep: bool = False) -> dict:
-        mapping = {}
-        for key_node, value_node in node.value:
-            key = self.construct_object(key_node, deep=deep)
-            if not isinstance(key, str) or key in mapping:
-                raise ValueError("Frontmatter keys must be unique strings")
-            mapping[key] = self.construct_object(value_node, deep=deep)
-        return mapping
+    status_code, public = 409, True
 
 
 def canonical_id(value: str) -> str:
@@ -92,86 +47,81 @@ def canonical_id(value: str) -> str:
 
 
 def normalized_name(value: str) -> str:
-    """Case/whitespace-insensitive name matching, including Russian е/ё."""
     return " ".join(value.casefold().replace("ё", "е").split())
 
 
+def _name(value: str) -> str:
+    value = value.strip()
+    if not value:
+        raise ValueError("Name must not be blank")
+    value.encode("utf-8")
+    return value
+
+
+Alias = Annotated[str, StringConstraints(min_length=1, max_length=MAX_ALIAS_CHARS, pattern=r"^[^\r\n\x00]+$"), AfterValidator(_name)]
+Tag = Annotated[str, StringConstraints(pattern=r"^[\w/-]{1,40}$")]
+ALIASES = TypeAdapter(Annotated[list[Alias], Field(max_length=MAX_ALIASES)])
+BODY = TypeAdapter(Annotated[str, StringConstraints(max_length=MAX_BODY_CHARS, pattern=r"^[^\x00]*$")])
+
+
 def validate_aliases(value: Any) -> list[str]:
-    if not isinstance(value, list) or len(value) > MAX_ALIASES:
-        raise InvalidRequestError("Person aliases must be a list of at most 8 names")
-    result: list[str] = []
-    seen: set[str] = set()
-    for alias in value:
-        if (
-            not isinstance(alias, str) or not alias.strip() or len(alias) > MAX_ALIAS_CHARS
-            or any(char in alias for char in "\r\n\x00")
-        ):
-            raise InvalidRequestError("Each person alias must contain 1..80 characters on one line")
-        key = normalized_name(alias)
-        if key not in seen:
-            result.append(alias.strip())
-            seen.add(key)
-    return result
-
-
-def timestamp(value: Any, tz: ZoneInfo, field: str) -> datetime | None:
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise InvalidRequestError(f"{field} must be an ISO timestamp or null")
     try:
-        result = parse_moment(value, tz)
-        if not isinstance(result, datetime):
-            raise InvalidRequestError(f"{field} requires a time, e.g. 2030-05-01T10:00")
-        naive = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        if naive.tzinfo is None:
-            choices = [naive.replace(tzinfo=tz, fold=fold) for fold in (0, 1)]
-            valid = [choice for choice in choices
-                     if choice.astimezone(timezone.utc).astimezone(tz).replace(tzinfo=None) == naive]
-            if not valid or len({choice.utcoffset() for choice in valid}) > 1:
-                raise InvalidRequestError(f"{field} is ambiguous or nonexistent in TIMEZONE; provide an explicit UTC offset")
-        # Even explicit offsets near datetime.min/max can overflow in UTC. Reject
-        # them here so one malformed hand-edited note never stops the whole scan.
-        result.astimezone(timezone.utc)
-        return result
-    except (OverflowError, ValueError, OSError) as exc:
-        raise InvalidRequestError(f"{field} is outside the supported timestamp range") from exc
+        aliases = ALIASES.validate_python(value, strict=True)
+    except ValidationError as exc:
+        raise InvalidRequestError("Person aliases must contain at most eight nonempty single-line names of up to 80 characters") from exc
+    unique = {}
+    for alias in aliases:
+        unique.setdefault(normalized_name(alias), alias)
+    return list(unique.values())
+
+
+class NoteMetadata(BaseModel):
+    model_config = ConfigDict(strict=True, extra="allow")
+
+    id: str
+    type: Literal["note", "task", "idea", "knowledge", "person"]
+    status: Literal["open", "done", "cancelled", "archived"]
+    title: Annotated[str, StringConstraints(min_length=1, max_length=200, pattern=r"^[^\r\n\x00]+$"), AfterValidator(_name)]
+    tags: Annotated[list[Tag], Field(max_length=16)] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+    due_at: str | None = None
+    remind_at: str | None = None
+    aliases: Any = Field(default_factory=list)
+
+    @field_validator("id")
+    @classmethod
+    def _id(cls, value: str) -> str:
+        return canonical_id(value)
+
+    @field_validator("created_at", "updated_at", "due_at", "remind_at", mode="before")
+    @classmethod
+    def _time(cls, value: Any, info: ValidationInfo) -> str | None:
+        moment = timestamp(value, info.context["tz"], info.field_name)
+        return moment.isoformat() if moment is not None else None
+
+    @model_validator(mode="after")
+    def _task_and_person_fields(self) -> NoteMetadata:
+        if self.type != "task" and (self.due_at is not None or self.remind_at is not None):
+            raise ValueError("Only tasks may have due_at or remind_at")
+        if self.type == "person":
+            self.aliases = validate_aliases(self.aliases)
+        self.tags = list(dict.fromkeys(self.tags))
+        return self
 
 
 def validate_metadata(meta: dict, tz: ZoneInfo) -> dict:
-    if not isinstance(meta, dict):
-        raise InvalidRequestError("YAML frontmatter must be a mapping")
-    result = dict(meta)
-    result["id"] = canonical_id(meta.get("id"))
-    if not isinstance(meta.get("type"), str) or meta["type"] not in KINDS:
-        raise InvalidRequestError("type must be note, task, idea, knowledge or person")
-    if not isinstance(meta.get("status"), str) or meta["status"] not in STATUSES:
-        raise InvalidRequestError("status must be open, done, cancelled or archived")
-    title = meta.get("title")
-    if not isinstance(title, str) or not title.strip() or len(title) > 200 or any(char in title for char in "\r\n\x00"):
-        raise InvalidRequestError("title must contain 1..200 characters on one line")
-    result["title"] = title.strip()
-    if meta["type"] == "person":
-        result["aliases"] = validate_aliases(meta.get("aliases", []))
-    # `aliases` is also a native Obsidian property. Existing non-person metadata
-    # stays untouched; only person aliases are exposed/searchable by this feature.
-    tags = meta.get("tags", [])
-    if not isinstance(tags, list) or len(tags) > 16 or any(not isinstance(t, str) or not TAG.fullmatch(t) for t in tags):
-        raise InvalidRequestError("tags must be at most 16 names of 1..40 letters, numbers, _, / or -")
-    result["tags"] = list(dict.fromkeys(tags))
-    for field in ("created_at", "updated_at"):
-        value = timestamp(meta.get(field), tz, field)
-        if value is None:
-            raise InvalidRequestError(f"{field} is required")
-        result[field] = value.isoformat()
+    try:
+        validated = NoteMetadata.model_validate(meta, context={"tz": tz})
+    except ValidationError as exc:
+        error = exc.errors(include_input=False, include_url=False)[0]
+        raise InvalidRequestError(f"Invalid note metadata {'.'.join(map(str, error['loc']))}: {error['msg']}") from exc
+    result = validated.model_dump(exclude={"aliases"})
     for field in ("due_at", "remind_at"):
-        value = timestamp(meta.get(field), tz, field)
-        if value is not None and meta["type"] != "task":
-            raise InvalidRequestError("Only tasks may have due_at or remind_at")
-        if value is not None:
-            result[field] = value.isoformat()
-        else:
-            result.pop(field, None)
+        if result[field] is None:
+            result.pop(field)
+    if validated.type == "person" or "aliases" in meta:
+        result["aliases"] = validated.aliases
     return result
 
 
@@ -191,39 +141,10 @@ class NoteRecord:
     def archived(self) -> bool:
         return self.metadata["status"] == "archived" or self.relative_path.split("/", 1)[0] == "Archive"
 
-
-def parse_note(raw: bytes, relative_path: str, tz: ZoneInfo) -> NoteRecord:
-    if len(raw) > MAX_NOTE_BYTES:
-        raise InvalidRequestError("Note is larger than 128 KiB")
-    try:
-        text = raw.decode("utf-8-sig").replace("\r\n", "\n")
-    except UnicodeDecodeError as exc:
-        raise InvalidRequestError("Note must use UTF-8") from exc
-    if not text.startswith("---\n"):
-        raise InvalidRequestError("Note has no YAML frontmatter")
-    end = text.find("\n---\n", 4)
-    if end < 0 or len(text[:end].encode("utf-8")) > MAX_FRONTMATTER_BYTES:
-        raise InvalidRequestError("Note has invalid or oversized YAML frontmatter")
-    try:
-        meta = yaml.load(text[4:end], Loader=FrontmatterLoader)
-        metadata = validate_metadata(meta, tz)
-    except (yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
-        raise InvalidRequestError("Note has invalid YAML frontmatter") from exc
-    body = text[end + 5:]
-    return NoteRecord(relative_path, metadata, body, raw, hashlib.sha256(raw).hexdigest())
-
-
-def render_note(metadata: dict, body: str, tz: ZoneInfo) -> bytes:
-    if not isinstance(body, str) or len(body) > MAX_BODY_CHARS or "\x00" in body:
-        raise InvalidRequestError("Note body must be text up to 32000 characters without NUL")
-    metadata = validate_metadata(metadata, tz)
-    try:
-        frontmatter = yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False, default_flow_style=False)
-    except (yaml.YAMLError, ValueError, TypeError, RecursionError) as exc:
-        raise InvalidRequestError("Frontmatter contains unsupported values") from exc
-    if len(frontmatter.encode("utf-8")) > MAX_FRONTMATTER_BYTES:
-        raise InvalidRequestError("Frontmatter is larger than 8 KiB")
-    raw = f"---\n{frontmatter}---\n{body.rstrip()}\n".encode("utf-8")
-    if len(raw) > MAX_NOTE_BYTES:
-        raise InvalidRequestError("Note is larger than 128 KiB")
-    return raw
+    def summary(self, source: str) -> dict:
+        result = {"id": self.id, "title": self.metadata["title"], "type": self.metadata["type"],
+                  "status": "archived" if self.archived else self.metadata["status"],
+                  "tags": self.metadata["tags"], "version": self.version, "source": source}
+        if self.metadata["type"] == "person":
+            result["aliases"] = self.metadata["aliases"]
+        return result

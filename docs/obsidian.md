@@ -1,8 +1,6 @@
 # Obsidian на VPS: заметки, задачи и синхронизация
 
-Это инструкция для последующего развёртывания. При подготовке изменений приложение,
-контейнеры и тесты не запускались; подключения к рабочим Telegram, Google и Whisper не было.
-Команды ниже выполняет владелец на VPS после проверки конфигурации и резервной копии.
+Настройка общего vault для backend, Windows и Android.
 
 ## Хранение и границы доступа
 
@@ -21,13 +19,14 @@ data/
 │   └── .obsidian/                    # локальная конфигурация клиента, обычно не синхронизировать
 ├── assistant-state/                  # отметки доставки, конфликты; не часть vault
 ├── openclaw/                         # workspace и состояние шлюза, без vault
-└── webdav/                           # сертификаты Caddy и private/webdav.yaml (секрет WebDAV)
+└── webdav/                           # сертификаты и состояние Caddy
 ```
 
-`OBSIDIAN_VAULT_DIR` по умолчанию равен `./data/obsidian`. Backend получает только
-`<OBSIDIAN_VAULT_DIR>/Secretary` как `/notes` и отдельный `/assistant-state`.
+Каталоги хоста фиксированы в Compose: `./data/obsidian/Secretary` подключён к backend как
+`/notes`, `./data/assistant-state` — как `/assistant-state`. Secretary задаёт область заметок,
+которую владелец разрешает читать и менять ассистенту; Personal остаётся за её пределами.
 WebDAV получает полный vault. У OpenClaw нет mount ни vault, ни assistant-state;
-заметки доступны модели только через MCP. SQLite, эмбеддинги и векторный поиск не используются.
+заметки доступны модели через MCP.
 
 WebDAV-сервисы включаются профилем `obsidian-sync`. Их отдельная Docker-сеть не соединяет
 WebDAV со шлюзом или backend. Снаружи публикуется HTTPS через Caddy; порт WsgiDAV `8080`
@@ -38,17 +37,17 @@ WebDAV со шлюзом или backend. Снаружи публикуется H
 В стандартной конфигурации Remotely Save добавляет имя локального vault к адресу WebDAV.
 В [исходнике плагина](https://github.com/remotely-save/remotely-save/blob/master/src/fsWebdav.ts)
 база вычисляется как `remoteBaseDir || vaultName`, затем используется путь `/<base>/`.
-Поэтому здесь root WebDAV — `/var/lib/dav`, а bind полного vault расположен в
-`/var/lib/dav/${OBSIDIAN_VAULT_NAME}`.
+Полный vault монтируется в фиксированный `/var/lib/dav`. WsgiDAV публикует его по маршруту
+`/<OBSIDIAN_VAULT_NAME>/`; имя меняет URL, а не путь mount.
 
 При значениях по умолчанию соответствие такое:
 
 | Место | Путь |
 |---|---|
 | Полный vault на VPS | `./data/obsidian/` |
-| Корень WebDAV | `https://notes.example.com/` |
+| Base URL клиента Remotely Save | `https://notes.example.com/` |
 | Папка vault на WebDAV | `https://notes.example.com/Obsidian/` |
-| Полный vault внутри WebDAV-контейнера | `/var/lib/dav/Obsidian/` |
+| Полный vault внутри WebDAV-контейнера | `/var/lib/dav/` |
 | Заметка клиента | `Secretary/Ideas/<id>.md` |
 | Та же заметка в Python-контейнере | `/notes/Ideas/<id>.md` |
 
@@ -56,6 +55,9 @@ WebDAV со шлюзом или backend. Снаружи публикуется H
 WebDAV endpoint **`https://notes.example.com/`**, без добавления `/Obsidian/` вручную.
 Иначе получится двойная вложенность `/Obsidian/Obsidian/`. Если локальное имя отличается,
 задайте в Remotely Save **Change the remote base directory** равным `OBSIDIAN_VAULT_NAME`.
+Remotely Save проверяет и использует `/<base>/`. Корень `/` здесь служит base URL, а отдельная
+DAV-коллекция в нём не публикуется: для прямой диагностики запрашивайте `/Obsidian/`
+(или своё имя vault), а не `/`.
 Это имя также используется в ссылках `obsidian://open?vault=...`, поэтому одинаковые
 локальные имена удобнее. После смены имени не создавайте новую пустую удалённую базу поверх
 данных: сначала проверьте каталог и резервную копию.
@@ -65,41 +67,47 @@ WebDAV endpoint **`https://notes.example.com/`**, без добавления `/
 Не перезаписывайте существующий `.env` примером. Добавьте только новые настройки:
 
 ```dotenv
-OBSIDIAN_VAULT_DIR=./data/obsidian
+NOTES_ROOT=/notes
+ASSISTANT_STATE_DIR=/assistant-state
 OBSIDIAN_VAULT_NAME=Obsidian
 NOTE_REMINDER_POLL_SECONDS=30
 OBSIDIAN_SYNC_DOMAIN=notes.example.com
 ```
 
-Для notes требуется непустой `AUTH_TOKEN`. Compose задаёт `NOTES_ROOT=/notes` и
-`ASSISTANT_STATE_DIR=/assistant-state`. Вне Compose эти два пути опциональны и задаются вместе.
-В первой версии изменение заметок рассчитано на Linux-файловую систему с `renameat2`;
+Для notes требуется непустой `AUTH_TOKEN`. Backend читает указанные пути из общего `.env`.
+Вне Compose эти два пути задаются вместе и указывают на локальные абсолютные каталоги.
+Изменение заметок рассчитано на Linux-файловую систему с `renameat2`;
 при отсутствии безопасной атомарной операции запись прекращается с ошибкой.
 
-Подготовьте каталоги и отдельный секрет WebDAV:
+Подготовьте каталоги:
 
 ```bash
 mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,People,Archive}
-mkdir -p data/obsidian/Personal data/assistant-state data/webdav/{caddy-data,caddy-config,private}
-cp deploy/webdav/wsgidav.example.yaml data/webdav/private/webdav.yaml
-chmod 700 data/webdav/private
-chmod 600 data/webdav/private/webdav.yaml
+mkdir -p data/obsidian/Personal data/assistant-state data/webdav/{caddy-data,caddy-config} secrets
 chmod 700 data/assistant-state
 ```
 
-В `data/webdav/private/webdav.yaml` замените пользователя `secretary-sync` и пароль
-`REPLACE_WITH_A_LONG_UNIQUE_PASSWORD`. Пароль должен быть отдельным от `AUTH_TOKEN`,
-Telegram и шлюза. Эта конфигурация хранит пароль открытым текстом на VPS, поэтому файл
-доступен только администратору и WebDAV-контейнеру, исключён из Git и образов и входит
-только в зашифрованные резервные копии. Никаких анонимных пользователей в шаблоне нет.
-Конфигурация лежит вне `secrets/`, чтобы её не получил backend с существующим mount Google secrets.
+Создайте `secrets/webdav.env` с двумя строками и отдельным паролем, например полученным
+командой `openssl rand -hex 32`:
+
+```dotenv
+WEBDAV_USERNAME=secretary-sync
+WEBDAV_PASSWORD=<длинный-случайный-пароль>
+```
+
+Ограничьте доступ: `chmod 600 secrets/webdav.env`. Файл исключён из Git и Docker context.
+WebDAV читает его через отдельный `env_file`; в общий `.env` эти учётные данные не добавляются.
+Рабочая конфигурация находится в `deploy/webdav/server.py`: она формирует словарь для
+`WsgiDAVApp` и запускает Cheroot. Пустые или незаполненные учётные данные останавливают запуск;
+анонимный доступ не включается. Пароль не записывается в конфигурационный файл или `data/`.
 
 WsgiDAV и существующий backend используют стандартного пользователя своих образов
 (в текущей конфигурации root внутри контейнера), чтобы не изменить права существующих
 Google secrets. При самостоятельном переходе на непривилегированного пользователя обоим
 сервисам нужны согласованные UID/GID и права на bind mounts; не делайте vault общедоступным
-через `chmod 777`. WebDAV получает `read_only` root filesystem, `cap_drop: ALL` и
-`no-new-privileges`; запись разрешена в смонтированный vault и ограниченный `/tmp`.
+через `chmod 777`. WebDAV получает `read_only` root filesystem, `no-new-privileges`
+и только `DAC_OVERRIDE` из capabilities для доступа к файлам разных владельцев на хосте.
+Запись разрешена в смонтированный vault и ограниченный `/tmp`.
 
 Для Caddy нужен домен с A/AAAA, направленными на VPS, доступные TCP-порты `80` и `443`
 и постоянный каталог сертификатов. Не оставляйте неправильную AAAA-запись. Если на этих
@@ -108,17 +116,14 @@ Google secrets. При самостоятельном переходе на не
 `8080` напрямую и не передавайте логин/пароль по HTTP. Требования автоматического TLS
 описаны в [документации Caddy](https://caddyserver.com/docs/automatic-https).
 
-После подготовки и отдельного решения о развёртывании:
+После подготовки:
 
 ```bash
 docker compose up -d --build personal-assistant
 docker compose --profile obsidian-sync up -d --build obsidian-webdav obsidian-https
 ```
 
-Команды здесь приведены как инструкция и в рамках изменения проекта не выполнялись.
-Связка WsgiDAV/Caddy сверена по документации и исходникам, но реальная совместимость
-выбранных версий клиентов, TLS и VPS без запуска не проверена. Первую синхронизацию
-проводите на небольшой копии vault с отдельной резервной копией.
+Первую синхронизацию проводите на копии vault с отдельной резервной копией.
 
 ## Windows и Android
 
@@ -134,7 +139,7 @@ docker compose --profile obsidian-sync up -d --build obsidian-webdav obsidian-ht
    затем подключайте второе. Не начинайте с двух различающихся полных копий одновременно.
 4. Не включайте шифрование Remotely Save для этой схемы: Python должен читать обычный Markdown
    на VPS. HTTPS шифрует транспорт; резервные копии шифруются отдельно. Для Personal с отдельным
-   E2EE нужен другой vault/отдельная синхронизация, это не первая версия.
+   E2EE нужен другой vault и отдельная синхронизация.
 5. Оставьте синхронизацию `.obsidian` выключенной. Служебная `.secretary-history` скрытая;
    в **Regex Of Paths To Ignore** добавьте регулярное выражение
    `^Secretary/\.secretary-history(?:/|$)` (это regex, а не glob).
@@ -195,8 +200,7 @@ Markdown-checkbox в теле не изменяет статус автомат�
 `status: done` в Properties/frontmatter либо попросить ассистента.
 
 Неподдерживаемые/некорректные файлы пропускаются отдельно, диагностика показывает их количество.
-Заметки без нужного frontmatter не импортируются автоматически. Первая версия не переписывает
-все существующие документы и не восстанавливает старую SQL-реализацию. Для ручного переноса
+Заметки без нужного frontmatter не импортируются автоматически. Для ручного переноса
 выберите нужные файлы, добавьте метаданные с уникальными UUID и разместите их в Secretary.
 
 ## Контракт инструментов и объём контекста
@@ -213,7 +217,7 @@ Markdown-checkbox в теле не изменяет статус автомат�
 | `notes_status` | Время сервера и состояние индекса/доставки без содержимого vault |
 
 Пути не являются аргументом инструментов: используется UUID. Сервис ограничивает каталоги,
-размер файлов и выдачи, запрещает симлинки и выход за Secretary. В первой версии максимум файла
+размер файлов и выдачи, запрещает симлинки и выход за Secretary. Максимум файла —
 128 КиБ, тела при записи через файловый модуль 32000 символов (MCP принимает до 16000 символов
 за вызов), выдержки `search_notes` — 240 символов. Индекс ограничен 5000 файлами, 20000 записями каталогов,
 глубиной 8 и 32 МиБ исходных байтов; память для декодированного текста и метаданных расходуется
@@ -257,7 +261,7 @@ JSON-ответ ограничен 4000 символами, включая UUID,
 автоматическую память OpenClaw. Нельзя поручать агенту многократно листать все страницы,
 чтобы обойти лимиты. При ответе по заметкам он указывает использованные источники и явно
 говорит, когда данных не хватает. Массовые изменения сначала показываются списком для
-подтверждения; первая версия предоставляет только операции над одной записью.
+подтверждения; инструменты изменяют по одной записи.
 
 В `openclaw.patch.json5` используются `tools.profile=messaging`, `read` для навыка и отдельно
 разрешённые `web_search`/`web_fetch` для публичного интернета (см. [настройку поиска](web-search.md)).
@@ -287,7 +291,7 @@ scripts/openclaw.sh skills info secretary
 Backend нужно пересобрать для нового MCP-инструмента, а шлюз пересоздать для read-only mount
 навыка 1.4.0. Обычный `restart` не добавляет mount. `openclaw-init` при запуске через Compose
 подготовит workspace и файлы личности; перед обновлением сохраните свои правки личности,
-как описано в [README](../README.md#обновление-существующего-vps). Сам режим контекста не требует
+как описано в [README](../README.md#3-openclaw). Сам режим контекста не требует
 новых переменных окружения или зависимостей; для перехода на OpenRouter нужны настройки
 из README. Vault не переносится в OpenClaw. После обновления отправьте боту `/new`.
 Команды приведены для владельца и при подготовке изменения не выполнялись.
@@ -310,7 +314,7 @@ Backend нужно пересобрать для нового MCP-инструм
 На Linux атомарная замена через `renameat2` сохраняет вытесненную предыдущую версию в
 `Secretary/.secretary-history`, в том числе её inode при уже открытой внешней записи.
 Метаданные конфликтов находятся в `assistant-state/conflicts`. Эти каталоги не выдаются
-через MCP. Не удаляйте историю, пока выполняется синхронизация: в первой версии автоматической
+через MCP. Не удаляйте историю, пока выполняется синхронизация: автоматической
 очистки истории нет. Контролируйте свободное место, резервируйте историю и очищайте только
 после остановки писателей и проверки нужных версий. Синхронизация с внешними офлайн-клиентами
 всё равно не гарантирует автоматическое слияние и строгое compare-and-swap на стороне клиента.
@@ -353,7 +357,7 @@ Python проверяет открытые задачи с `remind_at` раз в
 
 Синхронизация не резервная копия. Делайте независимую версионную зашифрованную копию полного
 vault, включая `.secretary-history`, `assistant-state`, `data/openclaw`, настроек развёртывания и
-`secrets/`, а также `data/webdav` с отдельным секретом и ключами Caddy.
+`secrets/`, а также `data/webdav` с ключами Caddy.
 Храните хотя бы одну копию вне VPS, несколько поколений и ограничьте доступ к ключам.
 Сам `Personal` ассистенту не виден, но доступен WebDAV и администратору VPS и должен резервироваться.
 
@@ -376,8 +380,8 @@ vault, включая `.secretary-history`, `assistant-state`, `data/openclaw`, 
   `remoteBaseDir`, базовые DAV-операции и Basic/Digest.
 - [Названия и описание настроек Remotely Save](https://github.com/remotely-save/remotely-save/blob/master/src/langs/en.json):
   регулярные выражения исключений, remote base directory и Depth.
-- [WsgiDAV configuration](https://wsgidav.readthedocs.io/en/latest/user_guide_configure.html),
-  [релиз 4.4.0](https://pypi.org/project/wsgidav/4.4.0/) и
+- [WsgiDAVApp](https://github.com/mar10/wsgidav/blob/master/wsgidav/wsgidav_app.py),
+  [конфигурация CLI 4.4.0](https://github.com/mar10/wsgidav/blob/v4.4.0/wsgidav/server/server_cli.py) и
   [FilesystemProvider](https://github.com/mar10/wsgidav/blob/master/wsgidav/fs_dav_provider.py):
   filesystem provider, запрет следования symlink, user mapping и auth.
 - [Caddy reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) и

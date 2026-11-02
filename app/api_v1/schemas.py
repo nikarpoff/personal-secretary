@@ -1,21 +1,14 @@
-from datetime import date, datetime, timedelta
+from datetime import timedelta
 from typing import Annotated, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
 from app.core.entities import Event
+from app.utils.time import local_day, local_iso
 
 TIME_HINT = "local time 'YYYY-MM-DDTHH:MM' or a date 'YYYY-MM-DD' for an all-day event; an explicit offset is honored"
 PersonId = Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
-
-
-def local_iso(moment: Optional[datetime], tz: ZoneInfo) -> Optional[str]:
-    return moment.astimezone(tz).isoformat(timespec="minutes") if moment else None
-
-
-def local_day(moment: datetime, tz: ZoneInfo) -> date:
-    return moment.astimezone(tz).date()
 
 
 # ---- requests --------------------------------------------------------------

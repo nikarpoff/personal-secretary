@@ -5,5 +5,6 @@ RUN pip install --no-cache-dir \
     "WsgiDAV==4.4.0" "cheroot==11.1.2" "PyYAML==6.0.3" \
     && mkdir -p /var/lib/dav
 
+COPY server.py /opt/webdav/server.py
 EXPOSE 8080
-ENTRYPOINT ["wsgidav", "--config=/etc/wsgidav.yaml"]
+ENTRYPOINT ["python", "/opt/webdav/server.py"]

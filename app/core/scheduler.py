@@ -1,9 +1,4 @@
-"""
-Google Calendar polling and Telegram reminders.
-
-Events and sent-reminder marks live only in memory. Restarting the process clears
-these marks, so reminders for upcoming events may be sent again after a restart.
-"""
+"""Google Calendar polling and Telegram reminders."""
 
 import asyncio
 
@@ -12,7 +7,7 @@ from typing import Dict, Optional, Set
 
 from loguru import logger
 
-from app.core.clock import iso_utc, utc_now
+from app.utils.time import iso_utc, utc_now
 from app.core.config import CALENDAR_SETTINGS, REMINDER_SETTINGS as CFG, Settings
 from app.core.exceptions import AppError
 from app.core.entities import Event
@@ -22,7 +17,7 @@ from app.core.upstream.calendar import to_event
 
 
 class ReminderScheduler:
-    """Fetches Google Calendar events and sends reminders without local storage."""
+    """Reads upcoming events and sends due reminders to Telegram."""
 
     def __init__(
         self,

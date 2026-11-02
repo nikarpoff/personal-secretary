@@ -11,16 +11,13 @@ DuckDuckGo-плагин использует экспериментальную 
 
 Конфигурация сверена с официальными документацией и схемой OpenClaw `v2026.10.9`.
 Наличие файла патча в репозитории само по себе не устанавливает плагин и не меняет VPS.
-При подготовке этих изменений приложение, Docker-контейнеры и тесты не запускались,
-запросы в DuckDuckGo и рабочие интеграции не выполнялись.
 
 ## Подключение на существующем VPS
 
 Команды ниже предназначены владельцу для последующего применения в каталоге проекта.
 Сначала перенесите обновлённые файлы проекта на сервер. Не перезаписывайте существующий
-`.env`: новых переменных для самого DuckDuckGo нет. Если переходите на текущую конфигурацию
-со старой версии, сначала согласуйте OpenRouter, окружение шлюза и mount навыка по
-[инструкции README](../README.md#обновление-существующего-vps).
+`.env`: добавьте параметры `WEB_*` из `.env.example`, сохранив существующие ключи.
+Настройка окружения шлюза и mount навыка описана в [README](../README.md#3-openclaw).
 
 1. Установите плагин **до** применения патча с `provider: "duckduckgo"`:
 
@@ -66,19 +63,27 @@ DuckDuckGo-плагин использует экспериментальную 
 
 ## Настройки и объём выдачи
 
-| Параметр | Значение | Смысл |
+| Переменная `.env` | По умолчанию | Параметр `tools.web` |
 |---|---|---|
-| `tools.alsoAllow` | `read`, `web_search`, `web_fetch` | Навык и два веб-инструмента поверх `messaging` |
-| `tools.web.search.provider` | `duckduckgo` | Явный выбор поискового провайдера |
-| `tools.web.search.maxResults` | `5` | Число результатов по умолчанию; не жёсткий лимит запросов или всех результатов |
-| `tools.web.search.timeoutSeconds` | `20` | Таймаут поиска |
-| `tools.web.search.cacheTtlMinutes` | `15` | Кэш повторных поисковых запросов |
-| `tools.web.fetch.maxChars` | `6000` | Обычный размер прочитанного фрагмента страницы |
-| `tools.web.fetch.maxCharsCap` | `8000` | Жёсткий предел выдачи страницы при переопределении `maxChars` |
-| `tools.web.fetch.maxResponseBytes` | `250000` | Ограничение скачиваемого тела перед разбором |
-| `tools.web.fetch.timeoutSeconds` | `20` | Таймаут чтения страницы |
-| `tools.web.fetch.maxRedirects` | `3` | Предел перенаправлений |
-| `tools.web.fetch.ssrfPolicy.dangerouslyAllowPrivateNetwork` | `false` | Без широкого доступа к частным сетям |
+| `WEB_SEARCH_MAX_RESULTS` | `5` | `search.maxResults` — число результатов по умолчанию |
+| `WEB_SEARCH_TIMEOUT_SECONDS` | `20` | `search.timeoutSeconds` |
+| `WEB_SEARCH_CACHE_TTL_MINUTES` | `15` | `search.cacheTtlMinutes` |
+| `WEB_FETCH_MAX_CHARS` | `6000` | `fetch.maxChars` — обычный объём фрагмента |
+| `WEB_FETCH_MAX_CHARS_CAP` | `8000` | `fetch.maxCharsCap` — жёсткий предел на страницу |
+| `WEB_FETCH_MAX_RESPONSE_BYTES` | `250000` | `fetch.maxResponseBytes` |
+| `WEB_FETCH_TIMEOUT_SECONDS` | `20` | `fetch.timeoutSeconds` |
+| `WEB_FETCH_CACHE_TTL_MINUTES` | `15` | `fetch.cacheTtlMinutes` |
+| `WEB_FETCH_MAX_REDIRECTS` | `3` | `fetch.maxRedirects` |
+
+В OpenClaw подстановка `${VAR}` сохраняет строковый тип, а эти поля требуют числа.
+Поэтому `scripts/openclaw.sh config patch --stdin` сначала запускает
+`scripts/render_openclaw_config.mjs` в контейнере: он проверяет значения и заменяет только
+известные числовые `WEB_*` на JSON-числа. Не вызывайте `node dist/index.js config patch`
+на исходном шаблоне напрямую. После изменения `.env` пересоздайте gateway и снова примените
+патч командами выше. Числа сохраняются в конфиге; строковые ссылки на токены не раскрываются renderer.
+
+Поиск остаётся `duckduckgo`; `read`, `web_search`, `web_fetch` разрешены поверх `messaging`.
+`fetch.ssrfPolicy.dangerouslyAllowPrivateNetwork=false` не даёт широкого доступа к частным сетям.
 
 Плагин допускает `count` от 1 до 10: значение `maxResults: 5` задаёт умолчание.
 Навык просит начинать с одного запроса, максимум пяти результатов и чтения одной–трёх
@@ -128,3 +133,4 @@ DuckDuckGo-плагин использует экспериментальную 
 - [DuckDuckGo в OpenClaw v2026.10.9](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/tools/duckduckgo-search.md): установка, выбор провайдера и ограничения HTML-поиска.
 - [Управление плагинами](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/plugins/manage-plugins.md) и [CLI plugins](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/cli/plugins.md): установка, включение и фиксация npm-версии.
 - [Web fetch](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/tools/web-fetch.md) и [схема параметров](https://github.com/openclaw/openclaw/blob/v2026.10.9/src/config/zod-schema.agent-runtime.ts): пределы выдачи и сетевые ограничения.
+- [Подстановка окружения](https://github.com/openclaw/openclaw/blob/v2026.10.9/src/config/env-substitution.ts): строковый результат `${VAR}`.

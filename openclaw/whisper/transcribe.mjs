@@ -56,7 +56,7 @@ async function transcribe() {
   form.append("word_timestamps", "false");
 
   const headers = { Accept: "application/json" };
-  // This server needs no auth by default. Never reuse OPENAI_API_KEY here.
+  // Use only the transcription service's own optional credential.
   const apiKey = process.env.WHISPER_API_KEY?.trim();
   if (apiKey) {
     headers.Authorization = `Bearer ${apiKey}`;
@@ -90,7 +90,7 @@ transcribe().catch((error) => {
   const message = error instanceof TranscriptionError
     ? error.message
     : error.name === "TimeoutError" || error.name === "AbortError"
-      ? "Whisper request timed out after 120 seconds"
+      ? `Whisper request timed out after ${TIMEOUT_MS / 1000} seconds`
       : "Could not read the audio attachment or connect to Whisper";
   console.error(`Whisper transcription failed: ${message}`);
   process.exitCode = 1;

@@ -17,7 +17,7 @@ first-run ritual, do not ask what to call you, do not try to edit these files.
 
 ## Memory
 
-Save facts, ideas and small tasks to Obsidian through the note tools when the owner asks.
+Save facts, ideas and tasks to Obsidian through the note tools when the owner asks.
 Use Calendar for scheduled events. Do not put note contents into workspace memory or bootstrap files.
 Task reminders require explicit `remind_at` and are delivered by the backend, without an LLM.
 

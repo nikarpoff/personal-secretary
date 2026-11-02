@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     # 2. Google Calendar
     GOOGLE_CREDENTIALS_FILE: Optional[Path] = Field(None, description="authorized_user (scripts/authorize_google.py) or service_account JSON; calendar tools are off when unset")
     GOOGLE_CALENDAR_ID: str = Field("primary", description="Calendar the assistant works with; a service account needs the owner's e-mail here")
-    CALENDAR_SYNC_INTERVAL: int = Field(60, ge=10, description="Seconds between two reads of the upcoming events; changes made through the agent are read at once")
-    CALENDAR_SYNC_DAYS: int = Field(30, ge=2, description="Days ahead the reminders look; must cover the earliest reminder")
+    CALENDAR_SYNC_INTERVAL: int = Field(60, ge=10, description="Seconds between reads of Google Calendar for reminders")
+    CALENDAR_SYNC_DAYS: int = Field(30, ge=2, description="Days ahead to fetch from Google Calendar for reminders")
     IMPORTANT_COLOR_ID: str = Field("11", description="Google event color that marks an important event; 11 is Tomato (red)")
 
     # 3. Telegram reminders
@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     REMINDER_MINUTES: Annotated[List[int], NoDecode] = Field([15], description="Minutes before start for events with default Google notifications, comma-separated")
     IMPORTANT_REMINDER_MINUTES: Annotated[List[int], NoDecode] = Field([1440, 120], description="Extra reminders of important events, comma-separated")
 
-    # 4. Obsidian: only the Secretary subtree is mounted here, never the full vault.
-    NOTES_ROOT: Optional[Path] = Field(None, description="Secretary-only bind mount; notes are disabled when unset")
+    # 4. Obsidian
+    NOTES_ROOT: Optional[Path] = Field(None, description="Directory of assistant notes; notes are disabled when unset")
     ASSISTANT_STATE_DIR: Optional[Path] = Field(None, description="Private persistent directory for task delivery marks and conflicts")
     OBSIDIAN_VAULT_NAME: str = Field("Obsidian", min_length=1, max_length=100, description="Same vault/base directory name on WebDAV, Windows and Android")
     NOTE_REMINDER_POLL_SECONDS: int = Field(30, ge=10, le=300, description="Task reminder polling interval, independent of Google Calendar")

@@ -87,14 +87,14 @@ Talk to the owner in Russian, briefly, as in a messenger.
   cards remain available for historical context but cannot be newly linked. Do not silently replace
   a missing/archived reference with another person. Card changes still require `expected_version`.
 
-## Notes, ideas and small tasks
+## Notes, ideas and tasks
 
 - Use `create_note` for short thoughts and voice transcripts worth keeping. `kind=idea` is an idea,
-  `kind=task` is an actionable small task, `kind=knowledge` is reference material, `kind=note` is Inbox.
+  `kind=task` is an actionable task, `kind=knowledge` is reference material, `kind=note` is Inbox.
   An idea without a deadline is never an overdue task. Do not invent dates, deadlines or reminder times.
 - Use `due_at` only for a task deadline and `remind_at` for an explicitly requested Telegram reminder.
   A deadline alone does not request a reminder. If "напомни" has no clear date/time, clarify it first.
-  Do not create a Calendar event for every small task. Use Calendar for scheduled meetings/events.
+  Use Calendar for scheduled meetings/events and notes for tasks without a calendar time slot.
 - `create_note` returns a short receipt. Confirm title and link once, without repeating the note body.
 - For ordinary recall, use the single `get_note_context` lookup described above. For an explicit
   broader/deeper search, `search_notes` takes a short query and optional type/status/tag, up to five

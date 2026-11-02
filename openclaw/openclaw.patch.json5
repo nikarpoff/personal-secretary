@@ -1,6 +1,6 @@
 // Патч конфига OpenClaw для ИИ-секретаря. Он дополняет конфиг, который создал onboard.
 // Секретов и личных данных здесь нет: ${VAR} OpenClaw подставляет из окружения шлюза (.env)
-// при каждой загрузке конфига, поэтому файл лежит в git как есть.
+// при каждой загрузке конфига. Числовые WEB_* преобразует scripts/openclaw.sh перед patch.
 //   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
 {
   agents: {
@@ -54,19 +54,19 @@
         // Install and enable @openclaw/duckduckgo-plugin before applying this patch.
         // Explicit selection keeps search on DuckDuckGo for the selected model.
         provider: "duckduckgo",
-        maxResults: 5, // default result count, not a hard per-turn budget
-        timeoutSeconds: 20,
-        cacheTtlMinutes: 15,
+        maxResults: "${WEB_SEARCH_MAX_RESULTS}", // default count, not a per-turn budget
+        timeoutSeconds: "${WEB_SEARCH_TIMEOUT_SECONDS}",
+        cacheTtlMinutes: "${WEB_SEARCH_CACHE_TTL_MINUTES}",
       },
       fetch: {
         enabled: true,
         readability: true,
-        maxChars: 6000,
-        maxCharsCap: 8000, // hard output cap per page
-        maxResponseBytes: 250000,
-        timeoutSeconds: 20,
-        cacheTtlMinutes: 15,
-        maxRedirects: 3,
+        maxChars: "${WEB_FETCH_MAX_CHARS}",
+        maxCharsCap: "${WEB_FETCH_MAX_CHARS_CAP}",
+        maxResponseBytes: "${WEB_FETCH_MAX_RESPONSE_BYTES}",
+        timeoutSeconds: "${WEB_FETCH_TIMEOUT_SECONDS}",
+        cacheTtlMinutes: "${WEB_FETCH_CACHE_TTL_MINUTES}",
+        maxRedirects: "${WEB_FETCH_MAX_REDIRECTS}",
         ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
       },
     },
