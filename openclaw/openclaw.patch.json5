@@ -104,6 +104,17 @@
           Authorization: "Bearer ${AUTH_TOKEN}",
         },
       },
+      // Заметки: хранилище Obsidian через Basic Memory. Удалять заметки и управлять проектами агенту
+      // незачем: в списке только чтение, поиск, запись, правка и перенос в архив
+      notes: {
+        url: "http://basic-memory:8000/mcp",
+        transport: "streamable-http",
+        // Первый смысловой поиск после установки скачивает модель
+        requestTimeoutMs: 120000,
+        toolFilter: {
+          include: ["bm_write", "bm_edit", "bm_read", "bm_search", "bm_find", "bm_list", "bm_context", "bm_move"],
+        },
+      },
     },
   },
 }
