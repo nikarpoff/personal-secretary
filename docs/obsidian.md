@@ -226,8 +226,9 @@ Markdown-checkbox в теле не изменяет статус автомат�
 говорит, когда данных не хватает. Массовые изменения сначала показываются списком для
 подтверждения; первая версия предоставляет только операции над одной записью.
 
-В `openclaw.patch.json5` сохранены `tools.profile=messaging` и `alsoAllow=[read]`, добавлены
-`tools.fs.workspaceOnly=true`, запрет runtime/мутаций файлов и `tools.elevated.enabled=false`.
+В `openclaw.patch.json5` используются `tools.profile=messaging`, `read` для навыка и отдельно
+разрешённые `web_search`/`web_fetch` для публичного интернета (см. [настройку поиска](web-search.md)).
+Сохранены `tools.fs.workspaceOnly=true`, запрет runtime/мутаций файлов и `tools.elevated.enabled=false`.
 `read` сохраняет доступ к `workspace/skills/secretary/SKILL.md`. Уменьшение списка инструментов
 само по себе не является файловой песочницей: границу обеспечивают отсутствие mount vault в
 шлюзе, проверка путей filesystem tools и файловый модуль backend.
@@ -236,7 +237,8 @@ Markdown-checkbox в теле не изменяет статус автомат�
 Docker sandbox для агентных команд здесь не включается: команды модели запрещены, Docker socket
 в gateway не монтируется. Whisper CLI остаётся доверенным настроенным media-обработчиком.
 
-Обновите навык в workspace по инструкции README и примените патч после подстановки Telegram id.
+Обновите навык в workspace по инструкции README. Перед применением полного патча
+установите и включите DuckDuckGo по [инструкции поиска](web-search.md), затем подставьте Telegram id.
 На развёрнутом шлюзе владелец может затем проверить `scripts/openclaw.sh config validate` и
 `scripts/openclaw.sh security audit`. Для фактического контекста в Telegram доступны `/status`,
 `/context list`, `/context detail`, `/usage tokens`; `/context detail` показывает также размер схем

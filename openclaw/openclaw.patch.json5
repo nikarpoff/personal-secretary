@@ -22,15 +22,37 @@
     ownerAllowFrom: ["telegram:<YOUR_TELEGRAM_USER_ID>"],
   },
   tools: {
-    // Секретарю не нужны shell, запись файлов и веб: чужое приглашение в календарь может нести
-    // prompt injection. messaging пропускает MCP-инструменты, read нужен для чтения SKILL.md
+    // MCP для календаря/заметок, read для навыка; веб доступен только через поиск и чтение страниц.
+    // Текст сайтов и заметок считается данными: команды и запись файлов модели не разрешены.
     profile: "messaging",
-    alsoAllow: ["read"],
+    alsoAllow: ["read", "web_search", "web_fetch"],
     // read may read only the agent workspace, including workspace/skills/secretary/SKILL.md.
     // The vault is outside this workspace and is not mounted into the gateway at all.
     fs: { workspaceOnly: true },
     elevated: { enabled: false },
     deny: ["group:runtime", "write", "edit", "apply_patch", "sessions_spawn", "sessions_send"],
+    web: {
+      search: {
+        enabled: true,
+        // Install and enable @openclaw/duckduckgo-plugin before applying this patch.
+        // Explicit selection keeps search on DuckDuckGo, including for OpenAI models.
+        provider: "duckduckgo",
+        maxResults: 5, // default result count, not a hard per-turn budget
+        timeoutSeconds: 20,
+        cacheTtlMinutes: 15,
+      },
+      fetch: {
+        enabled: true,
+        readability: true,
+        maxChars: 6000,
+        maxCharsCap: 8000, // hard output cap per page
+        maxResponseBytes: 250000,
+        timeoutSeconds: 20,
+        cacheTtlMinutes: 15,
+        maxRedirects: 3,
+        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
+      },
+    },
     media: {
       // Голосовые сначала распознаёт внешний Whisper; stdout обработчика получает ассистент.
       models: [
@@ -45,6 +67,14 @@
       audio: {
         enabled: true,
         maxBytes: 20971520,
+      },
+    },
+  },
+  plugins: {
+    entries: {
+      duckduckgo: {
+        enabled: true,
+        config: { webSearch: { safeSearch: "moderate" } },
       },
     },
   },

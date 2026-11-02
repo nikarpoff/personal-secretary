@@ -32,6 +32,7 @@
 - **Заметки Obsidian.** Inbox, идеи, задачи и справочные записи в обычном Markdown. Поиск возвращает максимум пять коротких результатов, чтение — выбранный фрагмент. Изменения проверяют версию файла, постоянное удаление заменено архивированием.
 - **Напоминания о задачах.** Явное `remind_at` проверяет Python без LLM и создания события Calendar; отметки сохраняются после перезапуска. Срок `due_at` сам по себе не включает уведомление.
 - **Windows и Android.** Опциональный HTTPS WebDAV и Remotely Save синхронизируют полный vault; Python видит только Secretary, OpenClaw не получает mount vault.
+- **Интернет.** Поиск DuckDuckGo без отдельного поискового API-ключа и чтение публичных страниц. Ассистент может искать по просьбе и для актуальных вопросов, указывая источники; объём страниц ограничен.
 
 ## Obsidian на VPS
 
@@ -40,6 +41,9 @@
 Перед обновлением существующего VPS подготовьте новые каталоги по инструкции:
 Compose не создаёт пустой vault вместо отсутствующего bind mount. WebDAV включается
 отдельным профилем `obsidian-sync`, а работа с заметками в backend не требует Google Calendar.
+
+Поиск DuckDuckGo требует установки плагина в OpenClaw перед применением патча.
+Подключение к существующему VPS, ограничения и диагностика описаны в [docs/web-search.md](docs/web-search.md).
 
 ## Быстрый старт
 
@@ -102,6 +106,11 @@ scripts/openclaw.sh onboard --non-interactive --accept-risk \
   --auth-choice openai-api-key --secret-input-mode ref \
   --gateway-auth token --gateway-bind lan --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN
 
+# Поисковый плагин: без API-ключа; --pin сохраняет точную установленную версию.
+# Установите и включите ДО применения патча, в котором выбран provider=duckduckgo.
+scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin --pin
+scripts/openclaw.sh plugins enable duckduckgo
+
 # Telegram только для вас, MCP-сервер, часовой пояс, ограничение инструментов агента
 TG_ID=123456789     # ваш user id, тот же, что TELEGRAM_CHAT_ID
 sed "s/<YOUR_TELEGRAM_USER_ID>/$TG_ID/g" openclaw/openclaw.patch.json5 | scripts/openclaw.sh config patch --stdin
@@ -153,6 +162,11 @@ OpenClaw скачивает голосовое Telegram и перед обраб
 ```bash
 # Пересоздание добавит read-only mount обработчика и переменные Whisper
 docker compose up -d --force-recreate openclaw-gateway
+
+# Полный актуальный патч также включает DuckDuckGo: сначала установите поисковый плагин.
+# Повторная установка не нужна, если плагин уже установлен и включён.
+scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin --pin
+scripts/openclaw.sh plugins enable duckduckgo
 
 # Применение полного патча: подставьте тот же id, что TELEGRAM_CHAT_ID
 TG_ID=123456789
@@ -270,6 +284,7 @@ curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" 
 
 - Бот отвечает только вам: `dmPolicy: "allowlist"` с вашим user id, вы же владелец слэш-команд OpenClaw.
 - У агента профиль `messaging` плюс `read` для навыков и `tools.fs.workspaceOnly=true`. Runtime-команды и файловые мутации запрещены, elevated выключен; навык secretary читается из workspace. Vault в gateway не монтируется. Приглашения и заметки могут содержать prompt injection: их текст считается данными. Перед удалением события и массовыми изменениями агент спрашивает подтверждение.
+- Для интернета отдельно разрешены `web_search` и `web_fetch`. Частные сети для чтения страниц не разрешаются; текст сайтов не даёт права менять календарь или заметки. Поисковые запросы должны обходиться без личных данных.
 - Backend получает только Secretary и отдельный assistant-state. MCP не принимает произвольные пути; Personal, .obsidian и служебная история не выдаются. Заметки не добавляются в автоматически загружаемую память OpenClaw.
 - Google-доступ ограничен событиями (`calendar.events`): ни списка календарей, ни прав доступа.
 - Порты сервиса (8090) и Control UI OpenClaw (18789) опубликованы только на `127.0.0.1`. Control UI открывайте через `ssh -L 18789:localhost:18789 <сервер>`.
@@ -329,4 +344,5 @@ uv run fastapi dev app/main.py             # http://localhost:8000/docs
 - После перезапуска до начала события уже отправленные напоминания могут повториться: отметки хранятся только в RAM.
 - Для задач Obsidian отметки постоянны, но авария между приёмом сообщения Telegram и сохранением отметки может вызвать дубль. Запускайте один backend worker с одним каталогом состояния.
 - Remotely Save синхронизирует только при работающем Obsidian; телефон может приостанавливать приложение. Синхронизация не заменяет резервную копию и не гарантирует слияние одновременных офлайн-правок.
+- DuckDuckGo используется через экспериментальный HTML-поиск: возможны CAPTCHA и изменения разметки. `web_fetch` не исполняет JavaScript; страницы с авторизацией или сложным интерфейсом могут не читаться. Поискового API-ключа не требуется, токены модели расходуются как обычно.
 - Синтаксис CLI и конфига OpenClaw проверен на версии 2026.10.9. Если команды изменятся, зафиксируйте `OPENCLAW_IMAGE` на этой версии.
