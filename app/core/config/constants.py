@@ -6,7 +6,6 @@ class CALENDAR_SETTINGS:
     API_URL = "https://www.googleapis.com/calendar/v3"
     SCOPES = ("https://www.googleapis.com/auth/calendar.events", )    # events only: no calendar list, no sharing
     PAGE_SIZE = 250                 # API maximum is 2500, a page this size keeps answers small
-    LIST_LIMIT = 500                # events one list request may return to the agent
     TIMEOUT = 20.0                  # seconds per request
     PAST_DAYS = 1                   # include ongoing events in calendar reads
     MAX_OVERRIDES = 5               # API limit of reminder overrides per event

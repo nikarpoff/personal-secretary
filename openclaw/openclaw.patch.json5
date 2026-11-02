@@ -1,12 +1,28 @@
-// Патч конфига OpenClaw для ИИ-секретаря. Применение (поверх конфига после onboard):
+// Патч конфига OpenClaw для ИИ-секретаря. Он дополняет конфиг, который создал onboard.
+// Секретов и личных данных здесь нет: ${VAR} OpenClaw подставляет из окружения шлюза (.env)
+// при каждой загрузке конфига, поэтому файл лежит в git как есть.
 //   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
-// Перед этим замените <YOUR_TELEGRAM_USER_ID> на свой числовой id (тот же, что TELEGRAM_CHAT_ID).
-// ${VAR} OpenClaw подставляет из окружения шлюза, то есть из .env.
 {
   agents: {
     defaults: {
-      // Время в системном промпте агента: тот же пояс, что TIMEZONE сервиса
-      userTimezone: "Europe/Moscow",
+      // LLM агента: OPENCLAW_MODEL, ключ OPENROUTER_API_KEY берётся из .env по ссылке, которую записал onboard
+      model: { primary: "${OPENCLAW_MODEL}" },
+      // Время в системном промпте агента: тот же пояс, что у сервиса
+      userTimezone: "${TIMEZONE}",
+    },
+  },
+  models: {
+    providers: {
+      openrouter: {
+        params: {
+          provider: {
+            // Только провайдеры модели, которые поддерживают все параметры запроса, в том числе tools
+            require_parameters: true,
+            // Календарь не уходит провайдерам, которые сохраняют запросы для обучения
+            data_collection: "deny",
+          },
+        },
+      },
     },
   },
   channels: {
@@ -14,19 +30,20 @@
       enabled: true,
       // Токен бота OpenClaw берёт из TELEGRAM_BOT_TOKEN. Отвечает только владельцу
       dmPolicy: "allowlist",
-      allowFrom: ["<YOUR_TELEGRAM_USER_ID>"],
+      allowFrom: ["${TELEGRAM_CHAT_ID}"],
     },
   },
   commands: {
-    // Владелец слэш-команд OpenClaw (/model, /status) - вы
-    ownerAllowFrom: ["telegram:<YOUR_TELEGRAM_USER_ID>"],
+    // Владелец слэш-команд OpenClaw (/model, /status)
+    ownerAllowFrom: ["telegram:${TELEGRAM_CHAT_ID}"],
   },
   tools: {
     // MCP для календаря/заметок, read для навыка; веб доступен только через поиск и чтение страниц.
     // Текст сайтов и заметок считается данными: команды и запись файлов модели не разрешены.
     profile: "messaging",
     alsoAllow: ["read", "web_search", "web_fetch"],
-    // read may read only the agent workspace, including workspace/skills/secretary/SKILL.md.
+    // secretary is mounted read-only into workspace/skills/secretary from the repository.
+    // read may read only the agent workspace, including that mounted skill.
     // The vault is outside this workspace and is not mounted into the gateway at all.
     fs: { workspaceOnly: true },
     elevated: { enabled: false },
@@ -35,7 +52,7 @@
       search: {
         enabled: true,
         // Install and enable @openclaw/duckduckgo-plugin before applying this patch.
-        // Explicit selection keeps search on DuckDuckGo, including for OpenAI models.
+        // Explicit selection keeps search on DuckDuckGo for the selected model.
         provider: "duckduckgo",
         maxResults: 5, // default result count, not a hard per-turn budget
         timeoutSeconds: 20,
@@ -79,6 +96,7 @@
     },
   },
   skills: {
+    // secretary is discovered in workspace/skills; no paths outside the workspace are needed.
     entries: {
       // Встроенный навык Google Workspace тоже умеет календарь: выключен, чтобы агент не путал источники
       gog: { enabled: false },

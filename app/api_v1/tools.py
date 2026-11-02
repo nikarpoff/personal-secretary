@@ -1,5 +1,5 @@
 """
-MCP tools for the OpenClaw agent.
+MCP tools of the OpenClaw agent.
 
 The same engine as the REST API, flattened into tool arguments: a model fills flat
 fields more reliably than nested objects. A public domain error reaches the model as
@@ -59,13 +59,11 @@ def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
     """MCP server whose tools call the engine."""
     server = MCPServer(name="personal-assistant", instructions=INSTRUCTIONS, version=version)
 
-    # ---- calendar ----------------------------------------------------------
-
     @server.tool(annotations=READ_ONLY)
     async def list_events(
         start: Annotated[Optional[str], Field(description=f"Range start: {TIME_HINT}; today by default")] = None,
         end: Annotated[Optional[str], Field(description="Range end; a date includes its whole day; the start day when start is a date, a week otherwise")] = None,
-        query: Annotated[Optional[str], Field(description="Words in the title, description or place")] = None,
+        query: Annotated[Optional[str], Field(description="Words in the title, description, place or attendees: finds an event to change or delete")] = None,
         limit: Annotated[int, Field(ge=1, le=500, description="Maximum events")] = 100,
     ) -> EventListResponse:
         """Events of the calendar in a range, plus the current local time."""

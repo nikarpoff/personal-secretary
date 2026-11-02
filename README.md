@@ -1,12 +1,12 @@
 # Personal Assistant
 
-ИИ-секретарь в Telegram: принимает текст и голосовые, ведёт события Google Calendar, сохраняет заметки, идеи и небольшие задачи в Obsidian и напоминает о них. Голосовые распознаёт внешний Whisper-сервер, затем текст получает агент [OpenClaw](https://docs.openclaw.ai) на моделях OpenAI. Агент вызывает этот сервис по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
+ИИ-секретарь в Telegram: принимает текст и голосовые, ведёт события Google Calendar, сохраняет заметки, идеи и небольшие задачи в Obsidian и напоминает о них. Голосовые распознаёт внешний Whisper-сервер, затем текст получает агент [OpenClaw](https://docs.openclaw.ai) на модели через OpenRouter. Агент вызывает этот сервис по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
 
 ```
  Вы ⇄ Telegram-бот (@BotFather)
           │ long polling
           ▼
-   OpenClaw gateway ── модель OpenAI, навык secretary, утренняя сводка (automation)
+   OpenClaw gateway ── LLM через OpenRouter, навык secretary, утренняя сводка (automation)
           ├─────────────► Whisper API: голосовое → текст для ассистента
           │ MCP: http://personal-assistant:8000/mcp/ + Bearer AUTH_TOKEN
           ▼
@@ -49,9 +49,30 @@ Compose не создаёт пустой vault вместо отсутствую
 Справочник людей, варианты имён и привязка встреч описаны в [docs/people.md](docs/people.md).
 Каждая карточка открывается обычной отдельной вкладкой Obsidian и синхронизируется вместе с vault.
 
+## Где что настраивается
+
+Секреты и параметры запуска задаются в `.env`, исключённом из Git. Compose передаёт каждому
+контейнеру только перечисленные для него переменные.
+
+| Что | Где |
+|---|---|
+| Токен бота, Telegram user id | `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
+| LLM агента | `.env`: `OPENROUTER_API_KEY`, `OPENCLAW_MODEL` |
+| Часовой пояс backend и агента | `.env`: `TIMEZONE` |
+| Доступ к Google Calendar | `secrets/google.json`, путь в `.env`: `GOOGLE_CREDENTIALS_FILE` |
+| Токены backend и шлюза | `.env`: `AUTH_TOKEN`, `OPENCLAW_GATEWAY_TOKEN` |
+| Адрес и авторизация распознавания голоса | `.env`: `WHISPER_URL`, необязательный `WHISPER_API_KEY` |
+| Модель, Telegram, MCP, навыки, политика инструментов | `openclaw/openclaw.patch.json5` |
+| Поведение секретаря | `openclaw/skills/secretary/SKILL.md`, mount только на чтение |
+| Имя, характер и общие правила | `openclaw/workspace/*.md`, копирует `openclaw-init` |
+
+Патч дополняет конфигурацию, созданную `onboard`. Значения `${VAR}` OpenClaw получает из
+окружения шлюза: подставлять Telegram id или часовой пояс через `sed` больше не нужно.
+Онбординг с `--secret-input-mode ref` сохраняет ссылки на секреты в окружении.
+
 ## Быстрый старт
 
-Нужны сервер с Docker, аккаунт Google и ключ OpenAI API.
+Нужны сервер с Docker, аккаунт Google и ключ [OpenRouter](https://openrouter.ai/keys).
 
 ### 1. Telegram-бот
 
@@ -62,7 +83,7 @@ Compose не создаёт пустой vault вместо отсутствую
 
 1. [Google Cloud Console](https://console.cloud.google.com/) → новый проект → **APIs & Services → Library** → включите **Google Calendar API**.
 2. **OAuth consent screen**: тип External, добавьте себя в Test users. Затем **Publish app** (статус «In production»). Иначе Google отзывает refresh-токен через 7 дней и календарь отвалится. Предупреждение «приложение не проверено» для личного использования нормально.
-3. **Credentials → Create credentials → OAuth client ID → Desktop app** → скачайте JSON в `secrets/client_secret.json`.
+3. **Credentials → Create credentials → OAuth client ID → Desktop app** → скачайте JSON, например в `secrets/client_secret.json`. Это файл OAuth-клиента (в нём ключ `installed`). Сервису он не подходит: из него получают токен на следующем шаге.
 4. Получите токен:
 
 ```bash
@@ -70,7 +91,7 @@ uv sync
 uv run scripts/authorize_google.py --client secrets/client_secret.json --out secrets/google.json
 ```
 
-На сервере без браузера пробросьте порт и откройте напечатанную ссылку у себя: `ssh -L 8765:localhost:8765 <сервер>`, затем тот же скрипт с `--no-browser`. Скрипт запрашивает только доступ к событиям (`calendar.events`).
+На сервере без браузера пробросьте порт и откройте напечатанную ссылку у себя: `ssh -L 8765:localhost:8765 <сервер>`, затем тот же скрипт с `--no-browser`. Скрипт запрашивает только доступ к событиям (`calendar.events`). В `GOOGLE_CREDENTIALS_FILE` указывается результат - `secrets/google.json`.
 
 Вместо OAuth можно взять сервисный аккаунт: ключ JSON в `secrets/google.json`, календарь расшарен на e-mail аккаунта с правом «Вносить изменения», `GOOGLE_CALENDAR_ID` = ваш e-mail. Ограничение: без Google Workspace сервисный аккаунт не может приглашать участников.
 
@@ -82,14 +103,17 @@ openssl rand -hex 32   # для AUTH_TOKEN
 openssl rand -hex 32   # для OPENCLAW_GATEWAY_TOKEN
 ```
 
-Заполните в `.env`: `AUTH_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENAI_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`, при необходимости `TIMEZONE`.
+Заполните в `.env`: `AUTH_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENROUTER_API_KEY`, `OPENCLAW_MODEL`, `OPENCLAW_GATEWAY_TOKEN`, при необходимости `TIMEZONE`.
 
 ```bash
 mkdir -p data/openclaw secrets data/assistant-state
 mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,People,Archive} data/obsidian/Personal
 chmod 700 data/assistant-state
-sudo chown -R 1000:1000 data/openclaw     # OpenClaw работает от пользователя node (uid 1000)
 ```
+
+Каталоги vault и assistant-state нужны до запуска backend. Каталог состояния OpenClaw
+подготавливает `openclaw-init`: копирует личность агента, удаляет `BOOTSTRAP.md` и назначает
+владельца UID 1000. Его вызывают wrapper `scripts/openclaw.sh` до первого запуска и Compose.
 
 ### 4. Сервис
 
@@ -104,10 +128,11 @@ docker compose logs personal-assistant | grep -i calendar       # Google Calenda
 Команды OpenClaw выполняет `scripts/openclaw.sh`: в работающем шлюзе через `docker compose exec`, до первого запуска - разовым контейнером.
 
 ```bash
-# Онбординг: ключ OpenAI и токен шлюза остаются в .env, в конфиг пишутся только ссылки на них
+# Онбординг: провайдер OpenRouter; ключ и токен шлюза остаются в .env, в конфиг пишутся ссылки на них.
+# --skip-bootstrap: личность агента приходит из openclaw/workspace, ритуал знакомства не нужен
 scripts/openclaw.sh onboard --non-interactive --accept-risk \
-  --mode local --no-install-daemon --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
-  --auth-choice openai-api-key --secret-input-mode ref \
+  --mode local --no-install-daemon --skip-bootstrap --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
+  --auth-choice openrouter-api-key --secret-input-mode ref \
   --gateway-auth token --gateway-bind lan --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN
 
 # Поисковый плагин: без API-ключа; --pin сохраняет точную установленную версию.
@@ -115,31 +140,77 @@ scripts/openclaw.sh onboard --non-interactive --accept-risk \
 scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin --pin
 scripts/openclaw.sh plugins enable duckduckgo
 
-# Telegram только для вас, MCP-сервер, часовой пояс, ограничение инструментов агента
-TG_ID=123456789     # ваш user id, тот же, что TELEGRAM_CHAT_ID
-sed "s/<YOUR_TELEGRAM_USER_ID>/$TG_ID/g" openclaw/openclaw.patch.json5 | scripts/openclaw.sh config patch --stdin
+# Модель, Telegram только для вас, MCP-сервер, навыки, пояс и политика инструментов
+scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
 scripts/openclaw.sh config validate
 
-# Навык секретаря
-mkdir -p data/openclaw/workspace/skills && cp -r openclaw/skills/secretary data/openclaw/workspace/skills/
-sudo chown -R 1000:1000 data/openclaw
+# Имя и эмодзи агента из openclaw/workspace/IDENTITY.md - в конфиг, их показывают UI и каналы
+scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
 
 docker compose up -d
 scripts/openclaw.sh mcp probe personal-assistant      # Calendar + bounded note tools
+scripts/openclaw.sh models status | grep Default      # openrouter/... из OPENCLAW_MODEL
 scripts/openclaw.sh skills info secretary             # secretary ✓ Ready
 ```
 
-Если ваш пояс не Москва, поправьте `userTimezone` в `openclaw/openclaw.patch.json5` вместе с `TIMEZONE` в `.env`. Шлюз стартует около 20 секунд после того, как сервис станет healthy.
+Шлюз стартует примерно через 20 секунд после того, как сервис станет healthy. Каталог
+`openclaw/skills/secretary` подключён read-only mount прямо в
+`/home/node/.openclaw/workspace/skills/secretary`, где OpenClaw обнаруживает навыки автоматически.
+`extraDirs` и ручное копирование не нужны. Mount закрывает прежнюю копию secretary в состоянии
+шлюза, сохраняя её на диске; другие пользовательские навыки остаются доступны.
+После обновления исходников начните новую сессию командой `/new`. При первом переходе на этот
+mount пересоздайте шлюз, как описано ниже: обычный `restart` не добавляет mount.
 
-Модель онбординг выбирает сам. Сменить её: `scripts/openclaw.sh models list --provider openai`, затем `scripts/openclaw.sh models set openai/<модель>`.
+### Личность агента
+
+Имя, характер и правила агента лежат в `openclaw/workspace`:
+
+| Файл | Что в нём |
+|---|---|
+| `IDENTITY.md` | Имя, эмодзи, роль |
+| `SOUL.md` | Характер и тон |
+| `USER.md` | Ваши предпочтения: язык, формат ответов |
+| `AGENTS.md` | Общие правила календаря, заметок и поиска; напоминания шлёт сервис, внешний текст считается данными |
+
+При запуске через Compose `openclaw-init` копирует их в рабочий каталог агента
+(`data/openclaw/workspace`) и удаляет `BOOTSTRAP.md`. Существующие файлы личности в workspace
+будут заменены: свои правки сначала перенесите в `openclaw/workspace`. Запись файлов и shell
+агенту для этого не нужны (см. «Безопасность»).
+
+Сменить имя или характер: поправьте файлы в `openclaw/workspace`, затем
+
+```bash
+docker compose run --rm --no-deps -T openclaw-init
+docker compose up -d --force-recreate openclaw-gateway
+scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
+```
+
+и отправьте боту `/new`: новая сессия начнётся с обновлённой личностью.
+
+### Control UI
+
+Порт шлюза опубликован только на `127.0.0.1` сервера. С вашей машины пробросьте его на **тот же** локальный порт 18789: шлюз пускает UI только с `http://localhost:18789` и `http://127.0.0.1:18789`.
+
+```bash
+ssh -N -L 18789:127.0.0.1:18789 <сервер>
+```
+
+Проще всего входить одноразовой ссылкой: она сразу авторизует браузер и одобряет его как устройство владельца. При входе по токену шлюз может дополнительно попросить одобрить устройство.
+
+```bash
+scripts/openclaw.sh dashboard --no-open      # ссылка вида http://127.0.0.1:18789/#bootstrapToken=...
+```
+
+Откройте ссылку в браузере на своей машине, пока она не истекла (несколько минут). Если вошли по токену из `OPENCLAW_GATEWAY_TOKEN` и UI ждёт одобрения устройства: `scripts/openclaw.sh devices list`, затем `scripts/openclaw.sh devices approve <id>`.
 
 ### 6. Утренняя сводка
 
 ```bash
+# Замените 123456789 на свой TELEGRAM_CHAT_ID
 scripts/openclaw.sh automations add --name "Утренняя сводка" \
   --cron "0 8 * * *" --tz Europe/Moscow --session isolated \
   --message "Утренняя сводка по навыку secretary" \
-  --announce --channel telegram --to $TG_ID
+  --announce --channel telegram --to 123456789
 ```
 
 Проверка: напишите боту «что у меня завтра?», «поставь на пятницу в 15:00 созвон с Петей, это важно», «перенеси созвон на 16:00».
@@ -172,19 +243,27 @@ docker compose up -d --force-recreate openclaw-gateway
 scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin --pin
 scripts/openclaw.sh plugins enable duckduckgo
 
-# Применение полного патча: подставьте тот же id, что TELEGRAM_CHAT_ID
-TG_ID=123456789
-sed "s/<YOUR_TELEGRAM_USER_ID>/$TG_ID/g" openclaw/openclaw.patch.json5 | scripts/openclaw.sh config patch --stdin
+# TELEGRAM_CHAT_ID и TIMEZONE подставятся из окружения шлюза
+scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
 scripts/openclaw.sh config validate
-
-# Обновление инструкций ассистента
-mkdir -p data/openclaw/workspace/skills && cp -r openclaw/skills/secretary data/openclaw/workspace/skills/
-sudo chown -R 1000:1000 data/openclaw
+scripts/openclaw.sh skills info secretary
 ```
 
 Изменения в исходниках сами по себе не меняют конфигурацию на внешнем сервере. Обработчик монтируется в шлюз как `/opt/secretary/transcribe-whisper.mjs` и запускается штатным CLI-процессором аудио OpenClaw; профиль инструментов агента остаётся `messaging`.
 
 В списке распознавания задан только этот обработчик, без резервного облачного STT. Обработка медиа в OpenClaw выполняется по возможности: сбой Whisper не останавливает весь диалог. Если расшифровка отсутствует, навык предлагает повторить голосовое или написать текстом.
+
+## LLM агента
+
+Основной провайдер — OpenRouter. Модель задаётся в `.env` через `OPENCLAW_MODEL` в формате
+`openrouter/<автор>/<модель>`; ей нужна поддержка вызова инструментов. Доступные модели можно
+посмотреть командой `scripts/openclaw.sh models list --provider openrouter --all`.
+После смены переменной пересоздайте шлюз: `docker compose up -d --force-recreate openclaw-gateway`.
+Команда `/model` меняет модель текущей сессии.
+
+Патч передаёт OpenRouter параметры `require_parameters: true` и `data_collection: "deny"`
+для выбора совместимых провайдеров. Голос распознаётся отдельным Whisper-сервисом:
+`OPENROUTER_API_KEY` не используется обработчиком транскрипции.
 
 ## Инструменты агента (MCP)
 
@@ -212,21 +291,50 @@ sudo chown -R 1000:1000 data/openclaw
 но это не общий лимит контекста всей переписки. `read_note` используется ради конкретного
 недостающего факта или перед изменением, а `search_notes` — для явного более широкого поиска.
 
-Для обновления существующего VPS пересоберите backend и скопируйте навык 1.4.0 в workspace:
+При обновлении backend с `get_note_context` пересоберите его и обновите шлюз с mount навыков:
 
 ```bash
 docker compose up -d --build personal-assistant
-mkdir -p data/openclaw/workspace/skills
-cp -r openclaw/skills/secretary data/openclaw/workspace/skills/
-sudo chown -R 1000:1000 data/openclaw/workspace/skills/secretary
-docker compose restart openclaw-gateway
+docker compose up -d --force-recreate openclaw-gateway
 scripts/openclaw.sh mcp probe personal-assistant
 scripts/openclaw.sh skills info secretary
 ```
 
-Перезапуск шлюза обновит навык и список MCP-инструментов. Новые зависимости и переменные
-окружения не нужны. Подробности режима и границ контекста —
+Сам `get_note_context` не требует новых зависимостей и переменных окружения.
+Для перехода со старой конфигурации сначала выполните миграцию ниже.
+Подробности режима и границ контекста —
 в [инструкции Obsidian](docs/obsidian.md#контракт-инструментов-и-объём-контекста).
+
+## Обновление существующего VPS
+
+Перед обновлением сохраните резервную копию `data/` и `.env`. Не заменяйте действующий `.env`
+примером: добавьте `OPENROUTER_API_KEY`, `OPENCLAW_MODEL` и проверьте существующие
+`TELEGRAM_CHAT_ID`, `TIMEZONE`, токены и параметры Whisper. Личные правки из workspace
+перенесите в `openclaw/workspace`, иначе `openclaw-init` заменит их версиями репозитория.
+
+Старую копию secretary в `data/openclaw/workspace/skills` переносить или удалять не нужно:
+новый read-only mount скроет её в контейнере. Для подключения mount требуется пересоздание
+шлюза с актуальным Compose; `docker compose restart` недостаточно.
+
+Существующую настройку OpenAI переводят на OpenRouter повторным онбордингом с параметрами
+из шага 5. Перед ним остановите шлюз (`docker compose stop openclaw-gateway`), чтобы wrapper
+запускал команды в разовом контейнере с новым окружением. Затем установите/включите DuckDuckGo
+и примените полный патч из шага 5. Перед запуском backend подготовьте каталоги Secretary и
+assistant-state по [инструкции Obsidian](docs/obsidian.md#подготовка-linux-vps).
+
+```bash
+docker compose up -d --build personal-assistant
+docker compose run --rm --no-deps -T openclaw-init
+docker compose up -d --force-recreate openclaw-gateway
+scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
+scripts/openclaw.sh config validate
+scripts/openclaw.sh mcp probe personal-assistant
+scripts/openclaw.sh skills info secretary
+```
+
+Проверьте, что путь навыка начинается с `/home/node/.openclaw/workspace/skills/secretary/`, и отправьте
+боту `/new`. Vault и assistant-state остаются на прежних mounts; в gateway они не добавляются.
+Команды миграции и развёртывания здесь приведены для владельца и автоматически не выполняются.
 
 ## REST API
 
@@ -281,15 +389,15 @@ curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" 
 
 У событий на весь день нет часа, от которого считать минуты. Они попадают в утреннюю сводку.
 
-## Конфигурация
+## Конфигурация сервиса
 
-Настройки сервиса задаются переменными окружения (`.env`). Compose передаёт каждому сервису только перечисленные ему ключи; ключ OpenAI получает шлюз OpenClaw. Без Google инструменты календаря выключены. Без Telegram календарные напоминания пишутся в лог, задачи остаются недоставленными. Пути заметок, состояние и WebDAV описаны в [инструкции Obsidian](docs/obsidian.md).
+Настройки сервиса задаются переменными окружения (`.env`). Compose передаёт каждому сервису только перечисленные ему ключи; ключ OpenRouter получает шлюз OpenClaw. Без Google инструменты календаря выключены. Без Telegram календарные напоминания пишутся в лог, задачи остаются недоставленными. Пути заметок, состояние и WebDAV описаны в [инструкции Obsidian](docs/obsidian.md).
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
 | `AUTH_TOKEN` | - | Bearer-токен REST и MCP; при включённых заметках обязателен |
 | `TIMEZONE` | `Europe/Moscow` | Часовой пояс владельца |
-| `GOOGLE_CREDENTIALS_FILE` | - | Токен `authorized_user` или ключ сервисного аккаунта |
+| `GOOGLE_CREDENTIALS_FILE` | - | Токен `authorized_user` из `scripts/authorize_google.py` или ключ сервисного аккаунта |
 | `GOOGLE_CALENDAR_ID` | `primary` | Календарь; для сервисного аккаунта - e-mail владельца |
 | `CALENDAR_SYNC_INTERVAL` | `60` | Период чтения событий Google Calendar в кэш RAM, секунды |
 | `CALENDAR_SYNC_DAYS` | `30` | Горизонт чтения календаря вперёд, дни; должен покрывать самое раннее напоминание |
@@ -303,18 +411,19 @@ curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" 
 | `OBSIDIAN_VAULT_NAME` | `Obsidian` | Имя vault/remote base directory и ссылок Obsidian |
 | `NOTE_REMINDER_POLL_SECONDS` | `30` | Период проверки `remind_at` задач |
 
-Переменные OpenClaw (`OPENAI_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_IMAGE`, `OPENCLAW_TZ`) описаны в `.env.example`. Если OpenAI или Telegram недоступны с сервера напрямую, задайте `HTTPS_PROXY` (и `NO_PROXY=personal-assistant,localhost`): его подхватывают оба контейнера.
+Переменные OpenClaw (`OPENROUTER_API_KEY`, `OPENCLAW_MODEL`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_IMAGE`) описаны в `.env.example`. `TIMEZONE` задаёт общий часовой пояс backend и агента. Если OpenRouter, Google или Telegram недоступны с сервера напрямую, задайте `HTTPS_PROXY` (и `NO_PROXY=personal-assistant,localhost`): его подхватывают оба контейнера.
 
-Неверная конфигурация не роняет сервис трейсбеком: каждая причина пишется в лог строкой `Bad configuration: ...`, после чего процесс завершается.
+Неверная конфигурация не роняет сервис трейсбеком: каждая причина пишется в лог строкой `Bad configuration: ...`, после чего процесс завершается. Если в `GOOGLE_CREDENTIALS_FILE` по ошибке указан файл OAuth-клиента, сервис так и скажет.
 
 ## Безопасность
 
 - Бот отвечает только вам: `dmPolicy: "allowlist"` с вашим user id, вы же владелец слэш-команд OpenClaw.
-- У агента профиль `messaging` плюс `read` для навыков и `tools.fs.workspaceOnly=true`. Runtime-команды и файловые мутации запрещены, elevated выключен; навык secretary читается из workspace. Vault в gateway не монтируется. Приглашения и заметки могут содержать prompt injection: их текст считается данными. Перед удалением события и массовыми изменениями агент спрашивает подтверждение.
+- У агента профиль `messaging` плюс `read` для навыков и `tools.fs.workspaceOnly=true`. Runtime-команды и файловые мутации запрещены, elevated выключен; навык secretary приходит из read-only mount репозитория. Vault в gateway не монтируется. Приглашения и заметки могут содержать prompt injection: их текст считается данными. Перед удалением события и массовыми изменениями агент спрашивает подтверждение.
 - Для интернета отдельно разрешены `web_search` и `web_fetch`. Частные сети для чтения страниц не разрешаются; текст сайтов не даёт права менять календарь или заметки. Поисковые запросы должны обходиться без личных данных.
 - Backend получает только Secretary и отдельный assistant-state. MCP не принимает произвольные пути; Personal, .obsidian и служебная история не выдаются. Заметки не добавляются в автоматически загружаемую память OpenClaw.
 - Google-доступ ограничен событиями (`calendar.events`): ни списка календарей, ни прав доступа.
-- Порты сервиса (8090) и Control UI OpenClaw (18789) опубликованы только на `127.0.0.1`. Control UI открывайте через `ssh -L 18789:localhost:18789 <сервер>`.
+- Порты сервиса (8090) и Control UI OpenClaw (18789) опубликованы только на `127.0.0.1`. Control UI открывайте через SSH-туннель (раздел «Control UI»).
+- Агенту не нужны `write` и `exec`, даже когда стандартный ритуал знакомства их просит: личность задаётся файлами из `openclaw/workspace`, имя в конфиг пишет `set-identity`.
 - Токены не пишутся в лог; логгер httpx заглушён, потому что URL Bot API содержит токен бота.
 
 ## Устройство
@@ -342,9 +451,10 @@ app/
 │   └── exceptions.py       AppError и наследники
 └── utils/                  lifespan (движок + MCP-сервер), логирование
 openclaw/
-├── openclaw.patch.json5    патч конфига OpenClaw: Telegram, MCP, пояс, политика инструментов
+├── openclaw.patch.json5    патч конфига OpenClaw: модель, Telegram, MCP, навыки, пояс, политика инструментов
 ├── whisper/transcribe.mjs  отправка голосовых внешнему Whisper и извлечение текста
-└── skills/secretary/       навык агента: как работать с календарём
+├── skills/secretary/       навык агента: календарь, заметки, люди и поиск
+└── workspace/              личность агента: IDENTITY, SOUL, USER, AGENTS
 scripts/
 ├── authorize_google.py     разовый вход в Google
 └── openclaw.sh             команды OpenClaw в контейнере шлюза

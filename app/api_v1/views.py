@@ -37,8 +37,6 @@ def get_engine(request: Request) -> AssistantEngine:
     raise HTTPException(500, "service is not initialized")
 
 
-# ---- events ----------------------------------------------------------------
-
 @router.get("/events",
     responses={
         status.HTTP_400_BAD_REQUEST: {"description": "Bad range bounds"},

@@ -56,14 +56,38 @@ services:
       start_period: 30s
       start_interval: 2s
 
+  # Разовый контейнер перед стартом шлюза:
+  # 1. кладёт личность агента из openclaw/workspace (имя, характер, правила) и убирает ритуал
+  #    первого запуска BOOTSTRAP.md - заполнить его сам агент не может, у него нет записи файлов;
+  # 2. отдаёт data/openclaw пользователю node (uid 1000): отсутствующий каталог Docker создаёт от root
+  openclaw-init:
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    user: "0:0"
+    entrypoint:
+      - sh
+      - -ec
+      - |
+        mkdir -p /home/node/.openclaw/workspace
+        cp /opt/personal-assistant/workspace/*.md /home/node/.openclaw/workspace/
+        rm -f /home/node/.openclaw/workspace/BOOTSTRAP.md
+        chown -R 1000:1000 /home/node/.openclaw
+    volumes:
+      - ./data/openclaw:/home/node/.openclaw
+      - ./openclaw/workspace:/opt/personal-assistant/workspace:ro
+    restart: "no"
+
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
     container_name: openclaw-gateway
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENCLAW_MODEL: ${OPENCLAW_MODEL:-openrouter/anthropic/claude-haiku-5.5}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
       AUTH_TOKEN: ${AUTH_TOKEN:-}
       HOME: /home/node
       OPENCLAW_HOME: /home/node
@@ -84,6 +108,8 @@ services:
     volumes:
       - ./data/openclaw:/home/node/.openclaw
       - ./openclaw/whisper/transcribe.mjs:/opt/secretary/transcribe-whisper.mjs:ro
+      # Native workspace skill loading keeps read access within tools.fs.workspaceOnly.
+      - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -97,6 +123,8 @@ services:
       # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
       - "127.0.0.1:18789:18789"
     depends_on:
+      openclaw-init:
+        condition: service_completed_successfully
       personal-assistant:
         condition: service_healthy
     restart: unless-stopped

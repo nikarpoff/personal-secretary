@@ -18,7 +18,9 @@ DuckDuckGo-плагин использует экспериментальную 
 
 Команды ниже предназначены владельцу для последующего применения в каталоге проекта.
 Сначала перенесите обновлённые файлы проекта на сервер. Не перезаписывайте существующий
-`.env`: новых переменных для DuckDuckGo нет.
+`.env`: новых переменных для самого DuckDuckGo нет. Если переходите на текущую конфигурацию
+со старой версии, сначала согласуйте OpenRouter, окружение шлюза и mount навыка по
+[инструкции README](../README.md#обновление-существующего-vps).
 
 1. Установите плагин **до** применения патча с `provider: "duckduckgo"`:
 
@@ -32,11 +34,12 @@ DuckDuckGo-плагин использует экспериментальную 
    шлюза и сообщения установки; при ошибке установки не переходите к применению патча.
    Отдельное включение также снимает сохранённый ранее `enabled: false`.
 
-2. Примените патч с тем же Telegram user id, который уже используется у бота:
+2. Пересоздайте шлюз для актуального окружения и read-only mount навыка, затем примените патч.
+   `TELEGRAM_CHAT_ID` и `TIMEZONE` берутся из окружения, подстановка через `sed` не нужна:
 
    ```bash
-   TG_ID=123456789
-   sed "s/<YOUR_TELEGRAM_USER_ID>/$TG_ID/g" openclaw/openclaw.patch.json5 | scripts/openclaw.sh config patch --stdin
+   docker compose up -d --force-recreate openclaw-gateway
+   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
    scripts/openclaw.sh config validate
    ```
 
@@ -46,15 +49,16 @@ DuckDuckGo-плагин использует экспериментальную 
    плагины. Если на VPS уже есть отдельный ограничивающий список плагинов или запрет
    `duckduckgo`, согласуйте его с новой установкой, сохраняя текущие Telegram и модель.
 
-3. Обновите инструкции секретаря внутри существующего workspace:
+3. Проверьте подключённый навык и начните новую сессию сообщением `/new` боту:
 
    ```bash
-   mkdir -p data/openclaw/workspace/skills
-   cp -r openclaw/skills/secretary data/openclaw/workspace/skills/
-   sudo chown -R 1000:1000 data/openclaw/workspace/skills/secretary
+   scripts/openclaw.sh skills info secretary
    ```
 
-   Установленные плагины и их состояние находятся в постоянном `data/openclaw`, который
+   Ожидаемый путь — `/home/node/.openclaw/workspace/skills/secretary/SKILL.md`: каталог
+   приходит из `openclaw/skills/secretary` через read-only mount внутри workspace. `extraDirs`
+   и копирование не нужны. Старая копия secretary на диске скрывается mount, удалять её не нужно.
+   Обычный `restart` не подключает новый mount. Установленные плагины и их состояние находятся в постоянном `data/openclaw`, который
    смонтирован как `/home/node/.openclaw`. Пересоздание контейнера не требует повторной
    установки при сохранении этого каталога. Vault в gateway не монтируется.
    Установка/включение и применение конфигурации могут обновить работающий шлюз;

@@ -262,7 +262,11 @@ JSON-ответ ограничен 4000 символами, включая UUID,
 В `openclaw.patch.json5` используются `tools.profile=messaging`, `read` для навыка и отдельно
 разрешённые `web_search`/`web_fetch` для публичного интернета (см. [настройку поиска](web-search.md)).
 Сохранены `tools.fs.workspaceOnly=true`, запрет runtime/мутаций файлов и `tools.elevated.enabled=false`.
-`read` сохраняет доступ к `workspace/skills/secretary/SKILL.md`. Уменьшение списка инструментов
+Каталог `openclaw/skills/secretary` монтируется только на чтение прямо в
+`/home/node/.openclaw/workspace/skills/secretary`: навык обнаруживается внутри workspace,
+поэтому `extraDirs` и ручное копирование не нужны. Старая копия secretary в состоянии шлюза
+остаётся на диске и скрыта mount; удалять её не требуется. `read` читает этот навык при
+сохранённом `workspaceOnly=true`. Уменьшение списка инструментов
 само по себе не является файловой песочницей: границу обеспечивают отсутствие mount vault в
 шлюзе, проверка путей filesystem tools и файловый модуль backend.
 Поддержка `workspaceOnly` проверена в
@@ -275,20 +279,21 @@ Docker sandbox для агентных команд здесь не включа
 
 ```bash
 docker compose up -d --build personal-assistant
-mkdir -p data/openclaw/workspace/skills
-cp -r openclaw/skills/secretary data/openclaw/workspace/skills/
-sudo chown -R 1000:1000 data/openclaw/workspace/skills/secretary
-docker compose restart openclaw-gateway
+docker compose up -d --force-recreate openclaw-gateway
 scripts/openclaw.sh mcp probe personal-assistant
 scripts/openclaw.sh skills info secretary
 ```
 
-Backend нужно пересобрать для нового MCP-инструмента, а навык 1.4.0 скопировать в существующий
-workspace. Перезапуск шлюза обновит навык и список MCP-инструментов. Новые переменные
-окружения и зависимости не нужны; vault не переносится в OpenClaw.
+Backend нужно пересобрать для нового MCP-инструмента, а шлюз пересоздать для read-only mount
+навыка 1.4.0. Обычный `restart` не добавляет mount. `openclaw-init` при запуске через Compose
+подготовит workspace и файлы личности; перед обновлением сохраните свои правки личности,
+как описано в [README](../README.md#обновление-существующего-vps). Сам режим контекста не требует
+новых переменных окружения или зависимостей; для перехода на OpenRouter нужны настройки
+из README. Vault не переносится в OpenClaw. После обновления отправьте боту `/new`.
 Команды приведены для владельца и при подготовке изменения не выполнялись.
 Перед применением полного патча установите и включите DuckDuckGo по
-[инструкции поиска](web-search.md), затем подставьте Telegram id.
+[инструкции поиска](web-search.md). `TELEGRAM_CHAT_ID` и `TIMEZONE` патч получает из окружения шлюза;
+редактирование патча через `sed` не требуется.
 На развёрнутом шлюзе владелец может затем проверить `scripts/openclaw.sh config validate` и
 `scripts/openclaw.sh security audit`. Для фактического контекста в Telegram доступны `/status`,
 `/context list`, `/context detail`, `/usage tokens`; `/context detail` показывает также размер схем

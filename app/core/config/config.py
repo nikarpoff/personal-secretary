@@ -16,8 +16,8 @@ class Settings(BaseSettings):
     # 2. Google Calendar
     GOOGLE_CREDENTIALS_FILE: Optional[Path] = Field(None, description="authorized_user (scripts/authorize_google.py) or service_account JSON; calendar tools are off when unset")
     GOOGLE_CALENDAR_ID: str = Field("primary", description="Calendar the assistant works with; a service account needs the owner's e-mail here")
-    CALENDAR_SYNC_INTERVAL: int = Field(60, ge=10, description="Seconds between reads of Google Calendar for reminders")
-    CALENDAR_SYNC_DAYS: int = Field(30, ge=2, description="Days ahead to fetch from Google Calendar for reminders")
+    CALENDAR_SYNC_INTERVAL: int = Field(60, ge=10, description="Seconds between two reads of the upcoming events; changes made through the agent are read at once")
+    CALENDAR_SYNC_DAYS: int = Field(30, ge=2, description="Days ahead the reminders look; must cover the earliest reminder")
     IMPORTANT_COLOR_ID: str = Field("11", description="Google event color that marks an important event; 11 is Tomato (red)")
 
     # 3. Telegram reminders

@@ -21,6 +21,7 @@ from app.core.entities import Event, Reminder
 Mark = Tuple[str, str, int]
 
 WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+DESCRIPTION_CHARS = 300             # the rest of the description is one tap away in the calendar
 
 
 def reminder_offsets(event: Event, default_minutes: Sequence[int], important_minutes: Sequence[int]) -> Tuple[int, ...]:
@@ -74,6 +75,10 @@ def format_reminder(reminder: Reminder, now: datetime, tz: ZoneInfo) -> str:
     ]
     if event.location:
         lines.append(f"📍 {html.escape(event.location)}")
+    if description := " ".join(event.description.split()):
+        if len(description) > DESCRIPTION_CHARS:
+            description = description[:DESCRIPTION_CHARS - 1] + "…"
+        lines.append(f"📝 {html.escape(description)}")
     if event.html_link:
         lines.append(f'<a href="{html.escape(event.html_link, quote=True)}">Открыть в календаре</a>')
     return "\n".join(lines)

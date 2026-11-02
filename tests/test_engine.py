@@ -1,5 +1,6 @@
 import asyncio
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -38,6 +39,34 @@ def _run(settings: Settings, monkeypatch: pytest.MonkeyPatch, scenario) -> None:
             await engine.shutdown()
 
     asyncio.run(wrapper())
+
+
+def _local(settings: Settings, minutes: int) -> str:
+    """Naive local time string, as the agent passes it."""
+    return (datetime.now(settings.tz) + timedelta(minutes=minutes)).strftime("%Y-%m-%dT%H:%M")
+
+
+def test_event_reminder_goes_out_once(settings, monkeypatch):
+    async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
+        # The background loop would race the checks below
+        await engine._scheduler.stop()
+
+        await engine.create_event(EventCreateRequest(
+            title="Созвон с Петром", start=_local(settings, 11), location="Zoom", description="Спросить про бюджет",
+        ))
+        await engine._scheduler.sync_calendar()
+
+        assert await engine._scheduler.send_due_reminders() == 1
+        assert await engine._scheduler.send_due_reminders() == 0
+
+        assert len(telegram.messages) == 1
+        message = telegram.messages[0]
+        assert "<b>Созвон с Петром</b>" in message
+        assert "через 1" in message
+        assert "📍 Zoom" in message
+        assert "📝 Спросить про бюджет" in message
+
+    _run(settings, monkeypatch, scenario)
 
 
 def test_event_update_keeps_duration_and_important_adds_reminders(settings, monkeypatch):
@@ -92,5 +121,19 @@ def test_create_event_rejects_bad_times(settings, monkeypatch, start, end):
         with pytest.raises(InvalidRequestError):
             await engine.create_event(EventCreateRequest(title="x", start=start, end=end))
         assert calendar.items == {}
+
+    _run(settings, monkeypatch, scenario)
+
+
+def test_deleted_event_gets_no_reminder(settings, monkeypatch):
+    async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
+        await engine._scheduler.stop()
+
+        event = await engine.create_event(EventCreateRequest(title="Отменится", start=_local(settings, 11)))
+        await engine.delete_event(event.id)
+        await engine._scheduler.sync_calendar()
+
+        assert await engine._scheduler.send_due_reminders() == 0
+        assert telegram.messages == []
 
     _run(settings, monkeypatch, scenario)
