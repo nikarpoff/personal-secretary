@@ -13,6 +13,10 @@
   },
   models: {
     providers: {
+      // Провайдер openai здесь - только протокол Whisper: ключ его сервиса, не OpenAI
+      openai: {
+        apiKey: "${WHISPER_API_KEY}",
+      },
       openrouter: {
         params: {
           provider: {
@@ -58,12 +62,13 @@
       },
     },
     media: {
-      // Голосовые сначала распознаёт внешний Whisper; stdout обработчика получает ассистент.
+      // Голосовые распознаёт ваш Whisper с OpenAI-совместимым API, ассистент получает текст
       models: [
         {
-          type: "cli",
-          command: "node",
-          args: ["--use-env-proxy", "/opt/secretary/transcribe-whisper.mjs", "{{AttachmentPath}}"],
+          provider: "openai",
+          model: "${WHISPER_MODEL}",
+          baseUrl: "${WHISPER_BASE_URL}",
+          language: "${WHISPER_LANGUAGE}",
           capabilities: ["audio"],
           timeoutSeconds: 150,
         },

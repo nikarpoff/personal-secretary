@@ -57,8 +57,6 @@ services:
       OPENCLAW_GATEWAY_PORT: "18789"
     volumes:
       - ./data/openclaw:/home/node/.openclaw
-      - ./openclaw/whisper/transcribe.mjs:/opt/secretary/transcribe-whisper.mjs:ro
-      - ./scripts/render_openclaw_config.mjs:/opt/personal-assistant/render-config.mjs:ro
       # Native workspace skill loading keeps read access within tools.fs.workspaceOnly.
       - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:
