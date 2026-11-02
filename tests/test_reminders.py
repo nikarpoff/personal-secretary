@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from app.core.clock import iso_utc
+from app.utils.time import iso_utc
 from app.core.entities import Event
 from app.core.reminders import due_reminders, format_reminder, reminder_offsets
 
@@ -59,8 +59,17 @@ def test_due_reminders_skips_sent_started_and_all_day():
     sent = {(event.id, iso_utc(event.start), 15)}
 
     assert _due([event], sent) == []
-    assert _due([_event(-5)]) == []
+    assert _due([_event(-10)]) == []
     assert _due([_event(10, all_day=True)]) == []
+
+
+def test_zero_minute_reminder_fires_at_the_start():
+    event = _event(0, own_reminders=(0, ))
+
+    reminders = _due([event])
+
+    assert [r.minutes for r in reminders] == [0]
+    assert "сейчас" in format_reminder(reminders[0], NOW + timedelta(seconds=20), TZ)
 
 
 def test_due_reminders_skips_offsets_before_creation():

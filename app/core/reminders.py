@@ -5,7 +5,8 @@ An event follows its own Google notifications when it has them, the REMINDER_MIN
 otherwise; an important one adds IMPORTANT_REMINDER_MINUTES. A reminder whose time came
 before the event was created is skipped: nobody wants "tomorrow" for an event made tonight.
 After downtime only the reminder closest to the start goes out, the earlier ones are
-marked as sent along with it.
+marked as sent along with it. An event stays due for LATE_MINUTES after its start, so a
+zero-minute reminder fires right at the start.
 """
 
 import html
@@ -15,12 +16,14 @@ from datetime import datetime, timedelta
 from typing import List, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
-from app.core.clock import iso_utc
+from app.utils.time import iso_utc
+from app.core.config import REMINDER_SETTINGS
 from app.core.entities import Event, Reminder
 
 Mark = Tuple[str, str, int]
 
 WEEKDAYS = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+LATE = timedelta(minutes=REMINDER_SETTINGS.LATE_MINUTES)
 DESCRIPTION_CHARS = 300             # the rest of the description is one tap away in the calendar
 
 
@@ -43,7 +46,7 @@ def due_reminders(
     due: List[Reminder] = []
     for event in events:
         # All-day events have no hour to count from: the morning briefing covers them
-        if event.all_day or event.start <= now:
+        if event.all_day or event.start + LATE <= now:
             continue
 
         start_key = iso_utc(event.start)
@@ -85,7 +88,9 @@ def format_reminder(reminder: Reminder, now: datetime, tz: ZoneInfo) -> str:
 
 
 def _time_left(delta: timedelta) -> str:
-    minutes = max(1, math.ceil(delta.total_seconds() / 60))
+    if delta.total_seconds() <= 0:
+        return "сейчас"
+    minutes = math.ceil(delta.total_seconds() / 60)
     if minutes < 60:
         return f"через {minutes} мин"
     hours, minutes = divmod(minutes, 60)

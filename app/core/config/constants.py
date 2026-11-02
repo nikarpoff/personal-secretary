@@ -16,6 +16,7 @@ class REMINDER_SETTINGS:
     """Background loop of the reminders."""
     TICK_SECONDS = 30               # reminder precision; the calendar sync runs on its own interval
     SENT_RETENTION_DAYS = 30        # sent-reminder marks are kept this long, then purged
+    LATE_MINUTES = 5                # a just started event still gets its reminder: the zero-minute one fires at the start
 
 
 class TELEGRAM_SETTINGS:

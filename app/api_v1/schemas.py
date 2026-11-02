@@ -1,20 +1,16 @@
-from datetime import date, datetime, timedelta
-from typing import List, Optional, Sequence
+from datetime import timedelta
+from typing import Annotated, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
 
 from app.core.entities import Event
+from app.utils.time import local_day, local_iso
+
+# Google keeps reminders up to four weeks before the start
+ReminderMinutes = List[Annotated[int, Field(ge=0, le=4 * 7 * 24 * 60)]]
 
 TIME_HINT = "local time 'YYYY-MM-DDTHH:MM' or a date 'YYYY-MM-DD' for an all-day event; an explicit offset is honored"
-
-
-def local_iso(moment: Optional[datetime], tz: ZoneInfo) -> Optional[str]:
-    return moment.astimezone(tz).isoformat(timespec="minutes") if moment else None
-
-
-def local_day(moment: datetime, tz: ZoneInfo) -> date:
-    return moment.astimezone(tz).date()
 
 
 # ---- requests --------------------------------------------------------------
@@ -28,7 +24,7 @@ class EventCreateRequest(BaseModel):
     description: str = Field("", description="Details, agenda, links")
     location: str = Field("", description="Place or a meeting link")
     important: bool = Field(False, description="Important events get extra early reminders and the red color in Google Calendar")
-    remind_minutes: Optional[List[int]] = Field(None, description="Reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")
+    remind_minutes: Optional[ReminderMinutes] = Field(None, description="Reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")
     recurrence: Optional[str] = Field(None, description="RRULE of a recurring event, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=MO'")
 
 
@@ -40,7 +36,7 @@ class EventUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, description="New details; empty string clears them")
     location: Optional[str] = Field(None, description="New place; empty string clears it")
     important: Optional[bool] = Field(None, description="Mark or unmark the event as important")
-    remind_minutes: Optional[List[int]] = Field(None, description="New reminders N minutes before the start; [] for none")
+    remind_minutes: Optional[ReminderMinutes] = Field(None, description="New reminders N minutes before the start; [] for none")
 
 
 # ---- responses -------------------------------------------------------------

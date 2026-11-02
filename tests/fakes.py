@@ -5,7 +5,7 @@ import itertools
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
-from app.core.clock import iso_utc, local_midnight
+from app.utils.time import iso_utc, local_midnight
 from app.core.exceptions import NotFoundError
 
 from zoneinfo import ZoneInfo

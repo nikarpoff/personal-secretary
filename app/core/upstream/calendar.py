@@ -9,7 +9,7 @@ refreshes the access token: the refresh is blocking, so it runs in a thread unde
 import asyncio
 import json
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -23,7 +23,7 @@ from google.auth.transport.requests import Request as GoogleRequest
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.clock import from_iso, iso_utc, local_midnight
+from app.utils.time import from_iso, iso_utc, local_midnight
 from app.core.config import CALENDAR_SETTINGS as CFG
 from app.core.entities import Event
 from app.core.exceptions import (
@@ -73,7 +73,7 @@ class GoogleEvent(BaseModel):
 
 
 def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Optional[Event]:
-    """Mirror entity of a Google event; None for a cancelled one."""
+    """Domain entity of a Google event; None for a cancelled one."""
     google = GoogleEvent.model_validate(item)
     if google.status == "cancelled":
         return None
@@ -240,7 +240,3 @@ class GoogleCalendarClient:
         except (ValueError, KeyError, TypeError):
             return response.text[:200] or f"HTTP {response.status_code}"
 
-
-def all_day_end(start: date, last_day: Optional[date]) -> date:
-    """Google keeps the end of an all-day event exclusive, the agent names the last day."""
-    return (last_day or start) + timedelta(days=1)
