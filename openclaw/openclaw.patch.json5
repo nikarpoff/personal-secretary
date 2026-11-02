@@ -1,6 +1,6 @@
 // Патч конфига OpenClaw для ИИ-секретаря. Он дополняет конфиг, который создал onboard.
 // Секретов и личных данных здесь нет: ${VAR} OpenClaw подставляет из окружения шлюза (.env)
-// при каждой загрузке конфига. Числовые WEB_* преобразует scripts/openclaw.sh перед patch.
+// при каждой загрузке конфига, поэтому файл лежит в git как есть.
 //   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
 {
   agents: {
@@ -38,36 +38,23 @@
     ownerAllowFrom: ["telegram:${TELEGRAM_CHAT_ID}"],
   },
   tools: {
-    // MCP для календаря/заметок, read для навыка; веб доступен только через поиск и чтение страниц.
-    // Текст сайтов и заметок считается данными: команды и запись файлов модели не разрешены.
+    // Секретарю не нужны shell и запись файлов: приглашение в календарь или веб-страница могут нести
+    // prompt injection. messaging пропускает MCP-инструменты, read читает навык, веб - только поиск и чтение
     profile: "messaging",
     alsoAllow: ["read", "web_search", "web_fetch"],
-    // secretary is mounted read-only into workspace/skills/secretary from the repository.
-    // read may read only the agent workspace, including that mounted skill.
-    // The vault is outside this workspace and is not mounted into the gateway at all.
+    // read видит только рабочий каталог агента; навык смонтирован в него из репозитория
     fs: { workspaceOnly: true },
     elevated: { enabled: false },
     deny: ["group:runtime", "write", "edit", "apply_patch", "sessions_spawn", "sessions_send"],
     web: {
       search: {
         enabled: true,
-        // Install and enable @openclaw/duckduckgo-plugin before applying this patch.
-        // Explicit selection keeps search on DuckDuckGo for the selected model.
+        // DuckDuckGo - плагин @openclaw/duckduckgo-plugin, ставится перед применением патча
         provider: "duckduckgo",
-        maxResults: "${WEB_SEARCH_MAX_RESULTS}", // default count, not a per-turn budget
-        timeoutSeconds: "${WEB_SEARCH_TIMEOUT_SECONDS}",
-        cacheTtlMinutes: "${WEB_SEARCH_CACHE_TTL_MINUTES}",
       },
       fetch: {
         enabled: true,
         readability: true,
-        maxChars: "${WEB_FETCH_MAX_CHARS}",
-        maxCharsCap: "${WEB_FETCH_MAX_CHARS_CAP}",
-        maxResponseBytes: "${WEB_FETCH_MAX_RESPONSE_BYTES}",
-        timeoutSeconds: "${WEB_FETCH_TIMEOUT_SECONDS}",
-        cacheTtlMinutes: "${WEB_FETCH_CACHE_TTL_MINUTES}",
-        maxRedirects: "${WEB_FETCH_MAX_REDIRECTS}",
-        ssrfPolicy: { dangerouslyAllowPrivateNetwork: false },
       },
     },
     media: {
@@ -96,7 +83,6 @@
     },
   },
   skills: {
-    // secretary is discovered in workspace/skills; no paths outside the workspace are needed.
     entries: {
       // Встроенный навык Google Workspace тоже умеет календарь: выключен, чтобы агент не путал источники
       gog: { enabled: false },
@@ -104,7 +90,7 @@
   },
   mcp: {
     servers: {
-      // Calendar + bounded note tools; key is the backend AUTH_TOKEN.
+      // Календарь; ключ тот же, что AUTH_TOKEN сервиса
       "personal-assistant": {
         url: "http://personal-assistant:8000/mcp/",
         transport: "streamable-http",

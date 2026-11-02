@@ -6,18 +6,14 @@ services:
     container_name: personal-assistant
     env_file: .env
     volumes:
+      - ./data/assistant:/data
       - ./secrets:/secrets:ro
-      # Secretary is the assistant's scope; Personal stays outside the backend.
-      - ./data/obsidian/Secretary:/notes
-      - ./data/assistant-state:/assistant-state
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
       - "127.0.0.1:8090:8000"
     extra_hosts:
       host.docker.internal: host-gateway
     restart: unless-stopped
-    # Let an in-flight task delivery finish and persist its acknowledgement.
-    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -90,51 +86,3 @@ services:
       retries: 5
       start_period: 20s
 
-  # Optional HTTPS WebDAV endpoint for Obsidian Remotely Save.
-  # Configure the domain and secrets/webdav.env as described in docs/obsidian.md.
-  obsidian-webdav:
-    profiles: [obsidian-sync]
-    build:
-      context: ./deploy/webdav
-    env_file:
-      - path: ./secrets/webdav.env
-        required: false
-    environment:
-      OBSIDIAN_VAULT_NAME: ${OBSIDIAN_VAULT_NAME:-Obsidian}
-    volumes:
-      - ./data/obsidian:/var/lib/dav
-    expose:
-      - "8080"
-    networks: [obsidian-sync]
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    cap_drop: [ALL]
-    # Host vault directories may belong to the deploy user.
-    cap_add: [DAC_OVERRIDE]
-    security_opt:
-      - no-new-privileges:true
-    restart: unless-stopped
-
-  obsidian-https:
-    profiles: [obsidian-sync]
-    image: caddy:2.10.2-alpine
-    environment:
-      # Must be a public hostname with DNS pointing at this VPS. Empty means fail closed.
-      OBSIDIAN_SYNC_DOMAIN: ${OBSIDIAN_SYNC_DOMAIN:-}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/webdav/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./data/webdav/caddy-data:/data
-      - ./data/webdav/caddy-config:/config
-    networks: [obsidian-sync]
-    depends_on:
-      - obsidian-webdav
-    restart: unless-stopped
-
-networks:
-  obsidian-sync:
-    # WebDAV is reachable only by its TLS proxy; backend/OpenClaw use a different network.
-    driver: bridge

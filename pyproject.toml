@@ -1,7 +1,7 @@
 [project]
 name = "personal-assistant"
 version = "1.0.0"
-description = "Бэкенд ИИ-секретаря: Google Calendar, заметки Obsidian и напоминания в Telegram для OpenClaw"
+description = "Бэкенд ИИ-секретаря: Google Calendar и напоминания в Telegram для агента OpenClaw"
 authors = [
     {name = "Nikita Karpov", email = "91084477+nikarpoff@users.noreply.github.com"}
 ]
@@ -21,10 +21,6 @@ dependencies = [
 
   # --- Core -------------------------------------------------------
   "tzdata>=2026.6",
-  "PyYAML>=6.0.3,<7.0.0",
-  "python-frontmatter>=1.3.0,<2.0.0",
-  "markdown-it-py>=4.2.0,<5.0.0",
-  "filelock>=4.2.7,<5.0.0",
 ]
 
 [dependency-groups]

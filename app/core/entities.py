@@ -7,7 +7,7 @@ from typing import Optional, Tuple
 
 @dataclass(frozen=True)
 class Event:
-    """Google Calendar event; times are timezone-aware."""
+    """Calendar event as the reminders see it; times are timezone-aware"""
     id: str
     title: str
     start: datetime
@@ -20,12 +20,6 @@ class Event:
     recurring_event_id: Optional[str] = None
     html_link: Optional[str] = None
     created: Optional[datetime] = None
-    person_ids: Tuple[str, ...] = ()  # Obsidian person cards, not Calendar attendee addresses
-
-    @property
-    def series_id(self) -> str:
-        """Series identifier for an occurrence, or the event's own identifier."""
-        return self.recurring_event_id or self.id
 
 
 @dataclass(frozen=True)

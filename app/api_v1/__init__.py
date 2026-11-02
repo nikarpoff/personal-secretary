@@ -1,1 +1,2 @@
-"""REST and MCP interfaces for the calendar assistant."""
+__all__ = ("router", )
+from app.api_v1.views import router

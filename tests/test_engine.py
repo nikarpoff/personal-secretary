@@ -17,6 +17,7 @@ from tests.fakes import FakeCalendar, FakeTelegram
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         _env_file=None,
+        DATA_DIR=tmp_path,
         TIMEZONE="Europe/Moscow",
         GOOGLE_CREDENTIALS_FILE=tmp_path / "google.json",
         TELEGRAM_BOT_TOKEN="123:abc",

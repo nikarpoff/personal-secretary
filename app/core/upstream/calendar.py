@@ -23,10 +23,9 @@ from google.auth.transport.requests import Request as GoogleRequest
 from loguru import logger
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.utils.time import from_iso, iso_utc, local_midnight
+from app.core.clock import from_iso, iso_utc, local_midnight
 from app.core.config import CALENDAR_SETTINGS as CFG
 from app.core.entities import Event
-from app.core.people import event_person_ids
 from app.core.exceptions import (
     NotFoundError,
     UpstreamError,
@@ -74,7 +73,7 @@ class GoogleEvent(BaseModel):
 
 
 def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Optional[Event]:
-    """Calendar entity of a Google event; None for a cancelled one."""
+    """Mirror entity of a Google event; None for a cancelled one."""
     google = GoogleEvent.model_validate(item)
     if google.status == "cancelled":
         return None
@@ -106,7 +105,6 @@ def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Option
         recurring_event_id=google.recurringEventId,
         html_link=google.htmlLink,
         created=from_iso(google.created),
-        person_ids=event_person_ids(item.get("extendedProperties")),
     )
 
 

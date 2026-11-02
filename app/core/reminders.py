@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import List, Sequence, Set, Tuple
 from zoneinfo import ZoneInfo
 
-from app.utils.time import iso_utc
+from app.core.clock import iso_utc
 from app.core.entities import Event, Reminder
 
 Mark = Tuple[str, str, int]
