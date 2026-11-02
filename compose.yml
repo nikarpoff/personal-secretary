@@ -6,14 +6,48 @@ services:
     container_name: personal-assistant
     volumes:
       - ./secrets:/secrets:ro
+      # Only Secretary is visible to the backend; the full vault is never mounted here.
+      - type: bind
+        source: ${OBSIDIAN_VAULT_DIR:-./data/obsidian}/Secretary
+        target: /notes
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/assistant-state
+        target: /assistant-state
+        bind:
+          create_host_path: false
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
       - "127.0.0.1:8090:8000"
-    env_file:
-      - .env
+    environment:
+      # .env is used by Compose interpolation; each process receives only its own keys.
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
+      TIMEZONE: ${TIMEZONE:-Europe/Moscow}
+      GOOGLE_CREDENTIALS_FILE: ${GOOGLE_CREDENTIALS_FILE:-}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID:-primary}
+      CALENDAR_SYNC_INTERVAL: ${CALENDAR_SYNC_INTERVAL:-60}
+      CALENDAR_SYNC_DAYS: ${CALENDAR_SYNC_DAYS:-30}
+      IMPORTANT_COLOR_ID: ${IMPORTANT_COLOR_ID:-11}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      REMINDER_MINUTES: ${REMINDER_MINUTES:-15}
+      IMPORTANT_REMINDER_MINUTES: ${IMPORTANT_REMINDER_MINUTES:-1440,120}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_DIAGNOSE: ${LOG_DIAGNOSE:-False}
+      NOTES_ROOT: /notes
+      ASSISTANT_STATE_DIR: /assistant-state
+      OBSIDIAN_VAULT_NAME: ${OBSIDIAN_VAULT_NAME:-Obsidian}
+      NOTE_REMINDER_POLL_SECONDS: ${NOTE_REMINDER_POLL_SECONDS:-30}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-personal-assistant,localhost,127.0.0.1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
+    # Let an in-flight task delivery finish and persist its acknowledgement.
+    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -26,9 +60,11 @@ services:
   openclaw-gateway:
     container_name: openclaw-gateway
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
-    env_file:
-      - .env
     environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      AUTH_TOKEN: ${AUTH_TOKEN:-}
       HOME: /home/node
       OPENCLAW_HOME: /home/node
       OPENCLAW_STATE_DIR: /home/node/.openclaw
@@ -41,6 +77,10 @@ services:
       WHISPER_MODEL: ${WHISPER_MODEL:-whisper-1}
       WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
       WHISPER_API_KEY: ${WHISPER_API_KEY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      ALL_PROXY: ${ALL_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-personal-assistant,localhost,127.0.0.1}
     volumes:
       - ./data/openclaw:/home/node/.openclaw
       - ./openclaw/whisper/transcribe.mjs:/opt/secretary/transcribe-whisper.mjs:ro
@@ -66,3 +106,56 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+
+  # Optional HTTPS WebDAV endpoint for Obsidian Remotely Save.
+  # Enable only after following docs/obsidian.md (domain, auth file, backup).
+  obsidian-webdav:
+    profiles: [obsidian-sync]
+    build:
+      context: ./deploy/webdav
+    volumes:
+      # Remotely Save adds /<vault-name>/ to its endpoint. Mount at that exact path.
+      - type: bind
+        source: ${OBSIDIAN_VAULT_DIR:-./data/obsidian}
+        target: /var/lib/dav/${OBSIDIAN_VAULT_NAME:-Obsidian}
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ./data/webdav/private/webdav.yaml
+        target: /etc/wsgidav.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    expose:
+      - "8080"
+    networks: [obsidian-sync]
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  obsidian-https:
+    profiles: [obsidian-sync]
+    image: caddy:2.10.2-alpine
+    environment:
+      # Must be a public hostname with DNS pointing at this VPS. Empty means fail closed.
+      OBSIDIAN_SYNC_DOMAIN: ${OBSIDIAN_SYNC_DOMAIN:-}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/webdav/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./data/webdav/caddy-data:/data
+      - ./data/webdav/caddy-config:/config
+    networks: [obsidian-sync]
+    depends_on:
+      - obsidian-webdav
+    restart: unless-stopped
+
+networks:
+  obsidian-sync:
+    # WebDAV is reachable only by its TLS proxy; backend/OpenClaw use a different network.
+    driver: bridge

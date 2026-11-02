@@ -1,3 +1,6 @@
+import asyncio
+
+from contextlib import AsyncExitStack
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -16,6 +19,8 @@ from app.core.config import CALENDAR_SETTINGS as CFG, Settings
 from app.core.entities import Event
 from app.core.exceptions import CalendarNotConfiguredError, InvalidRequestError, NotFoundError
 from app.core.reminders import reminder_offsets
+from app.core.notes import NotesStore, NotesUnavailableError
+from app.core.note_reminders import NoteReminderScheduler
 from app.core.scheduler import ReminderScheduler
 from app.core.upstream import GoogleCalendarClient, TelegramClient
 from app.core.upstream.calendar import all_day_end, reminders_body, time_body, to_event
@@ -24,7 +29,7 @@ MAX_REMINDER_MINUTES = 4 * 7 * 24 * 60      # Google limit: four weeks
 
 
 class AssistantEngine:
-    """Google Calendar operations and Telegram reminders for the OpenClaw agent."""
+    """Google Calendar, scoped Obsidian notes and Telegram reminders for OpenClaw."""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -39,21 +44,98 @@ class AssistantEngine:
             if settings.TELEGRAM_BOT_TOKEN else None
         )
         self._scheduler = ReminderScheduler(settings, self._calendar, self._telegram)
+        self._notes = (
+            NotesStore(settings.NOTES_ROOT, settings.ASSISTANT_STATE_DIR, self._tz, settings.OBSIDIAN_VAULT_NAME)
+            if settings.notes_enabled else None
+        )
+        self._note_scheduler = (
+            NoteReminderScheduler(
+                self._notes, settings.ASSISTANT_STATE_DIR, self._telegram, self._tz,
+                poll_seconds=settings.NOTE_REMINDER_POLL_SECONDS,
+            ) if self._notes is not None else None
+        )
 
     async def startup(self) -> None:
-        if self._calendar is not None:
-            await self._calendar.startup()
-            self._scheduler.start()
-        else:
-            logger.warning("GOOGLE_CREDENTIALS_FILE is unset: calendar tools are off")
+        try:
+            if self._calendar is not None:
+                await self._calendar.startup()
+                self._scheduler.start()
+            else:
+                logger.warning("GOOGLE_CREDENTIALS_FILE is unset: calendar tools are off")
+            if self._notes is not None:
+                await asyncio.to_thread(self._notes.initialize)
+                await self._note_scheduler.start()
+        except BaseException:
+            await self.shutdown()
+            raise
         if self._telegram is None:
             logger.warning("TELEGRAM_BOT_TOKEN is unset: reminders go to the log only")
 
     async def shutdown(self) -> None:
-        await self._scheduler.stop()
-        for client in (self._calendar, self._telegram):
-            if client is not None:
-                await client.aclose()
+        # All callbacks run even if one fails; notes finish delivery before Telegram closes.
+        async with AsyncExitStack() as cleanup:
+            for client in (self._calendar, self._telegram):
+                if client is not None:
+                    cleanup.push_async_callback(client.aclose)
+            cleanup.push_async_callback(self._scheduler.stop)
+            if self._notes is not None:
+                cleanup.push_async_callback(asyncio.to_thread, self._notes.close)
+            if self._note_scheduler is not None:
+                cleanup.push_async_callback(self._note_scheduler.stop)
+
+    # ---- notes -------------------------------------------------------------
+
+    def _require_notes(self) -> NotesStore:
+        if self._notes is None:
+            raise NotesUnavailableError("Notes are not configured: set NOTES_ROOT and ASSISTANT_STATE_DIR")
+        return self._notes
+
+    async def search_notes(
+        self, query: str = "", kind: Optional[str] = None, status: Optional[str] = None,
+        tag: Optional[str] = None, include_archive: bool = False, limit: int = 5,
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(
+            self._require_notes().search, query=query, kind=kind, status=status,
+            tag=tag, include_archive=include_archive, limit=limit,
+        )
+
+    async def read_note(
+        self, note_id: str, offset: int = 0, limit: int = 4000, section: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._require_notes().read, note_id, offset=offset, limit=limit, section=section)
+
+    async def create_note(
+        self, title: str, body: str, kind: str = "note", tags: Optional[List[str]] = None,
+        due_at: Optional[str] = None, remind_at: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        result = await asyncio.to_thread(
+            self._require_notes().create, title=title, body=body, kind=kind,
+            tags=tags or [], due_at=due_at, remind_at=remind_at,
+        )
+        self._note_scheduler.request_check()
+        return result
+
+    async def append_note(self, note_id: str, text: str, expected_version: str) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._require_notes().append, note_id, text, expected_version)
+
+    async def update_note(self, note_id: str, expected_version: str, patch: Dict[str, Any]) -> Dict[str, Any]:
+        result = await asyncio.to_thread(self._require_notes().update, note_id, expected_version, patch)
+        self._note_scheduler.request_check()
+        return result
+
+    async def archive_note(self, note_id: str, expected_version: str) -> Dict[str, Any]:
+        result = await asyncio.to_thread(self._require_notes().archive, note_id, expected_version)
+        self._note_scheduler.request_check()
+        return result
+
+    async def notes_status(self) -> Dict[str, Any]:
+        store = self._require_notes()
+        return {
+            "now": local_iso(utc_now(), self._tz),
+            "timezone": self.settings.TIMEZONE,
+            "store": await asyncio.to_thread(store.status),
+            "reminders": self._note_scheduler.status(),
+        }
 
     # ---- calendar ----------------------------------------------------------
 

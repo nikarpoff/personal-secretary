@@ -26,6 +26,11 @@
     // prompt injection. messaging пропускает MCP-инструменты, read нужен для чтения SKILL.md
     profile: "messaging",
     alsoAllow: ["read"],
+    // read may read only the agent workspace, including workspace/skills/secretary/SKILL.md.
+    // The vault is outside this workspace and is not mounted into the gateway at all.
+    fs: { workspaceOnly: true },
+    elevated: { enabled: false },
+    deny: ["group:runtime", "write", "edit", "apply_patch", "sessions_spawn", "sessions_send"],
     media: {
       // Голосовые сначала распознаёт внешний Whisper; stdout обработчика получает ассистент.
       models: [
@@ -51,7 +56,7 @@
   },
   mcp: {
     servers: {
-      // Четыре инструмента Google Calendar; ключ тот же, что AUTH_TOKEN сервиса
+      // Calendar + bounded note tools; key is the backend AUTH_TOKEN.
       "personal-assistant": {
         url: "http://personal-assistant:8000/mcp/",
         transport: "streamable-http",

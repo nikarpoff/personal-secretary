@@ -1,6 +1,6 @@
 # Personal Assistant
 
-ИИ-секретарь в Telegram: принимает текст и голосовые, ставит события в Google Calendar и напоминает о них. Голосовые распознаёт внешний Whisper-сервер, затем текст получает агент [OpenClaw](https://docs.openclaw.ai) на моделях OpenAI. Этот сервис - его «руки»: Google Calendar и напоминания. Агент вызывает сервис по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
+ИИ-секретарь в Telegram: принимает текст и голосовые, ведёт события Google Calendar, сохраняет заметки, идеи и небольшие задачи в Obsidian и напоминает о них. Голосовые распознаёт внешний Whisper-сервер, затем текст получает агент [OpenClaw](https://docs.openclaw.ai) на моделях OpenAI. Агент вызывает этот сервис по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
 
 ```
  Вы ⇄ Telegram-бот (@BotFather)
@@ -11,11 +11,16 @@
           │ MCP: http://personal-assistant:8000/mcp/ + Bearer AUTH_TOKEN
           ▼
    personal-assistant ──────► Google Calendar API
-     │  RAM: временный кэш событий и отметки отправленных напоминаний
+     ├─────────────────────► Secretary/*.md + assistant-state/*.json
+     │  RAM: кэш календаря; задачи Obsidian имеют постоянные отметки доставки
      └──────────────────────► Telegram Bot API: напоминания от имени того же бота
+
+ Windows / Android Obsidian ⇄ Remotely Save ⇄ HTTPS WebDAV ⇄ полный vault на VPS
+                                                             ├── Secretary (ассистент)
+                                                             └── Personal (только владелец)
 ```
 
-Напоминания живут в сервисе, чтобы работать, когда модель недоступна, и не тратить токены на каждую проверку. Утреннюю сводку, где нужен «ум», делает OpenClaw. Источник событий - Google Calendar; кэш и отметки отправки существуют только до перезапуска сервиса.
+Напоминания живут в сервисе, чтобы работать, когда модель недоступна, и не тратить токены на каждую проверку. Утреннюю сводку, где нужен «ум», делает OpenClaw. Источник событий — Google Calendar; его кэш и отметки отправки находятся в RAM. Задачи Obsidian хранятся в Markdown, их отметки доставки — в постоянных JSON-файлах.
 
 ## Возможности
 
@@ -24,6 +29,17 @@
 - **Напоминания в Telegram.** За `REMINDER_MINUTES` до начала (по умолчанию 15 минут). Если у события в Google настроены свои уведомления, берутся они. Важные события получают ещё напоминания за сутки и за два часа (`IMPORTANT_REMINDER_MINUTES`). В напоминании - название, время, место и ссылка на событие.
 - **Важные события** помечаются красным цветом в Google Calendar (`IMPORTANT_COLOR_ID`). Так их видно в календаре, и событие можно сделать важным прямо из интерфейса Google, сменив цвет.
 - **Утренняя сводка** - автоматизация OpenClaw: события дня и важное на неделю.
+- **Заметки Obsidian.** Inbox, идеи, задачи и справочные записи в обычном Markdown. Поиск возвращает максимум пять коротких результатов, чтение — выбранный фрагмент. Изменения проверяют версию файла, постоянное удаление заменено архивированием.
+- **Напоминания о задачах.** Явное `remind_at` проверяет Python без LLM и создания события Calendar; отметки сохраняются после перезапуска. Срок `due_at` сам по себе не включает уведомление.
+- **Windows и Android.** Опциональный HTTPS WebDAV и Remotely Save синхронизируют полный vault; Python видит только Secretary, OpenClaw не получает mount vault.
+
+## Obsidian на VPS
+
+Подключение Remotely Save, HTTPS и авторизация, соответствие путей, формат Markdown,
+конфликты, резервирование и миграция описаны в [docs/obsidian.md](docs/obsidian.md).
+Перед обновлением существующего VPS подготовьте новые каталоги по инструкции:
+Compose не создаёт пустой vault вместо отсутствующего bind mount. WebDAV включается
+отдельным профилем `obsidian-sync`, а работа с заметками в backend не требует Google Calendar.
 
 ## Быстрый старт
 
@@ -61,7 +77,9 @@ openssl rand -hex 32   # для OPENCLAW_GATEWAY_TOKEN
 Заполните в `.env`: `AUTH_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENAI_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`, при необходимости `TIMEZONE`.
 
 ```bash
-mkdir -p data/openclaw secrets
+mkdir -p data/openclaw secrets data/assistant-state
+mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,Archive} data/obsidian/Personal
+chmod 700 data/assistant-state
 sudo chown -R 1000:1000 data/openclaw     # OpenClaw работает от пользователя node (uid 1000)
 ```
 
@@ -94,7 +112,7 @@ mkdir -p data/openclaw/workspace/skills && cp -r openclaw/skills/secretary data/
 sudo chown -R 1000:1000 data/openclaw
 
 docker compose up -d
-scripts/openclaw.sh mcp probe personal-assistant      # personal-assistant: 4 tools
+scripts/openclaw.sh mcp probe personal-assistant      # Calendar + bounded note tools
 scripts/openclaw.sh skills info secretary             # secretary ✓ Ready
 ```
 
@@ -160,6 +178,12 @@ sudo chown -R 1000:1000 data/openclaw
 | `create_event` | Новое событие: время, длительность, место, `important`, `remind_minutes`, `recurrence` |
 | `update_event` | Меняет только переданные поля; при переносе длительность сохраняется |
 | `delete_event` | Удаляет событие; `recurring_event_id` удаляет всю серию |
+| `search_notes` | Поиск и фильтры заметок, максимум 5 коротких результатов; без Archive по умолчанию |
+| `read_note` | Выбранный UUID, раздел или фрагмент до 4000 символов с версией и источником |
+| `create_note` | Создать note/task/idea/knowledge; вернуть короткую квитанцию |
+| `append_note` / `update_note` | Дополнить/изменить запись, проверив `expected_version` |
+| `archive_note` | Архивировать одну запись с проверкой версии |
+| `notes_status` | Текущее время и диагностика индекса/доставки без содержимого заметок |
 
 Ошибки предметной области («Event not found», «Event must end after it starts») доходят до модели текстом: она может исправить вызов.
 
@@ -218,11 +242,11 @@ curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" 
 
 ## Конфигурация
 
-Настройки сервиса задаются переменными окружения (`.env`). Без Google инструменты календаря выключены; без Telegram напоминания только пишутся в лог. Ключ OpenAI нужен агенту OpenClaw.
+Настройки сервиса задаются переменными окружения (`.env`). Compose передаёт каждому сервису только перечисленные ему ключи; ключ OpenAI получает шлюз OpenClaw. Без Google инструменты календаря выключены. Без Telegram календарные напоминания пишутся в лог, задачи остаются недоставленными. Пути заметок, состояние и WebDAV описаны в [инструкции Obsidian](docs/obsidian.md).
 
 | Переменная | По умолчанию | Описание |
 |---|---|---|
-| `AUTH_TOKEN` | - | Bearer-токен REST и MCP; без него авторизация выключена |
+| `AUTH_TOKEN` | - | Bearer-токен REST и MCP; при включённых заметках обязателен |
 | `TIMEZONE` | `Europe/Moscow` | Часовой пояс владельца |
 | `GOOGLE_CREDENTIALS_FILE` | - | Токен `authorized_user` или ключ сервисного аккаунта |
 | `GOOGLE_CALENDAR_ID` | `primary` | Календарь; для сервисного аккаунта - e-mail владельца |
@@ -234,6 +258,9 @@ curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" 
 | `REMINDER_MINUTES` | `15` | Напоминания по умолчанию, минуты через запятую |
 | `IMPORTANT_REMINDER_MINUTES` | `1440,120` | Дополнительные напоминания важных событий |
 | `LOG_LEVEL` / `LOG_DIAGNOSE` | `INFO` / `False` | Логирование |
+| `NOTES_ROOT` / `ASSISTANT_STATE_DIR` | не заданы вне Compose | Secretary и отдельное служебное состояние; задаются вместе, требуют `AUTH_TOKEN` |
+| `OBSIDIAN_VAULT_NAME` | `Obsidian` | Имя vault/remote base directory и ссылок Obsidian |
+| `NOTE_REMINDER_POLL_SECONDS` | `30` | Период проверки `remind_at` задач |
 
 Переменные OpenClaw (`OPENAI_API_KEY`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_IMAGE`, `OPENCLAW_TZ`) описаны в `.env.example`. Если OpenAI или Telegram недоступны с сервера напрямую, задайте `HTTPS_PROXY` (и `NO_PROXY=personal-assistant,localhost`): его подхватывают оба контейнера.
 
@@ -242,7 +269,8 @@ curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" 
 ## Безопасность
 
 - Бот отвечает только вам: `dmPolicy: "allowlist"` с вашим user id, вы же владелец слэш-команд OpenClaw.
-- У агента профиль инструментов `messaging` плюс `read` для навыков. Приглашение в календарь от постороннего может содержать prompt injection, поэтому доступные инструменты ограничены. Перед удалением события агент спрашивает подтверждение (инструкция навыка, у инструмента пометка `destructiveHint`).
+- У агента профиль `messaging` плюс `read` для навыков и `tools.fs.workspaceOnly=true`. Runtime-команды и файловые мутации запрещены, elevated выключен; навык secretary читается из workspace. Vault в gateway не монтируется. Приглашения и заметки могут содержать prompt injection: их текст считается данными. Перед удалением события и массовыми изменениями агент спрашивает подтверждение.
+- Backend получает только Secretary и отдельный assistant-state. MCP не принимает произвольные пути; Personal, .obsidian и служебная история не выдаются. Заметки не добавляются в автоматически загружаемую память OpenClaw.
 - Google-доступ ограничен событиями (`calendar.events`): ни списка календарей, ни прав доступа.
 - Порты сервиса (8090) и Control UI OpenClaw (18789) опубликованы только на `127.0.0.1`. Control UI открывайте через `ssh -L 18789:localhost:18789 <сервер>`.
 - Токены не пишутся в лог; логгер httpx заглушён, потому что URL Bot API содержит токен бота.
@@ -255,11 +283,14 @@ app/
 ├── api_v1/
 │   ├── views.py            REST /v1/events
 │   ├── tools.py            MCP-инструменты агента и McpEndpoint
+│   ├── note_tools.py       ограниченные MCP-инструменты заметок
 │   ├── schemas.py          pydantic-контракт API и инструментов
 │   └── errors.py           AppError → {"detail": ...}
 ├── core/
 │   ├── engine.py           AssistantEngine: операции с календарём
 │   ├── scheduler.py        чтение календаря, кэш в RAM и отправка напоминаний
+│   ├── notes/              Markdown/frontmatter, ограниченный поиск, версии и конфликты
+│   ├── note_reminders.py   задачи Obsidian и постоянные JSON-отметки доставки
 │   ├── reminders.py        какие напоминания пора отправить и их текст
 │   ├── clock.py            разбор локального времени агента
 │   ├── upstream/           клиенты Google Calendar и Telegram Bot API
@@ -276,9 +307,11 @@ scripts/
 ├── authorize_google.py     разовый вход в Google
 └── openclaw.sh             команды OpenClaw в контейнере шлюза
 tests/                      pytest: напоминания, клиент Google, движок с фейками, API и MCP
+deploy/webdav/              WsgiDAV, шаблон авторизации и HTTPS Caddy
+docs/obsidian.md             настройка Windows/Android, безопасность и резервирование
 ```
 
-Google Calendar вызывается через общий `httpx.AsyncClient`. google-auth загружает учётные данные и обновляет access-токен в потоке под блокировкой. Сервис не сохраняет события и отметки отправки на диск.
+Google Calendar вызывается через общий `httpx.AsyncClient`. google-auth загружает учётные данные и обновляет access-токен в потоке под блокировкой. Календарные события и их отметки на диск не сохраняются; заметки и отметки задач Obsidian постоянны.
 
 ## Разработка
 
@@ -294,4 +327,6 @@ uv run fastapi dev app/main.py             # http://localhost:8000/docs
 - Один календарь (`GOOGLE_CALENDAR_ID`) и один владелец.
 - Перенос времени через id серии меняет начало серии целиком; одно вхождение переносится по его собственному id.
 - После перезапуска до начала события уже отправленные напоминания могут повториться: отметки хранятся только в RAM.
+- Для задач Obsidian отметки постоянны, но авария между приёмом сообщения Telegram и сохранением отметки может вызвать дубль. Запускайте один backend worker с одним каталогом состояния.
+- Remotely Save синхронизирует только при работающем Obsidian; телефон может приостанавливать приложение. Синхронизация не заменяет резервную копию и не гарантирует слияние одновременных офлайн-правок.
 - Синтаксис CLI и конфига OpenClaw проверен на версии 2026.10.9. Если команды изменятся, зафиксируйте `OPENCLAW_IMAGE` на этой версии.

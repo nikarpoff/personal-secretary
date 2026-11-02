@@ -26,7 +26,13 @@ class Settings(BaseSettings):
     REMINDER_MINUTES: Annotated[List[int], NoDecode] = Field([15], description="Minutes before start for events with default Google notifications, comma-separated")
     IMPORTANT_REMINDER_MINUTES: Annotated[List[int], NoDecode] = Field([1440, 120], description="Extra reminders of important events, comma-separated")
 
-    # 4. Logging settings
+    # 4. Obsidian: only the Secretary subtree is mounted here, never the full vault.
+    NOTES_ROOT: Optional[Path] = Field(None, description="Secretary-only bind mount; notes are disabled when unset")
+    ASSISTANT_STATE_DIR: Optional[Path] = Field(None, description="Private persistent directory for task delivery marks and conflicts")
+    OBSIDIAN_VAULT_NAME: str = Field("Obsidian", min_length=1, max_length=100, description="Same vault/base directory name on WebDAV, Windows and Android")
+    NOTE_REMINDER_POLL_SECONDS: int = Field(30, ge=10, le=300, description="Task reminder polling interval, independent of Google Calendar")
+
+    # 5. Logging settings
     LOG_LEVEL: Literal["TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"] = Field("INFO", description="Minimum level a message needs to be logged")
     LOG_DIAGNOSE: bool = Field(False, description="Add variable values to logged tracebacks; debug only - request payloads and auth tokens end up in the logs")
 
@@ -48,6 +54,22 @@ class Settings(BaseSettings):
         if (self.TELEGRAM_BOT_TOKEN is None) != (self.TELEGRAM_CHAT_ID is None):
             raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set together")
 
+        if (self.NOTES_ROOT is None) != (self.ASSISTANT_STATE_DIR is None):
+            raise ValueError("NOTES_ROOT and ASSISTANT_STATE_DIR are set together")
+        if self.NOTES_ROOT is not None:
+            if not self.AUTH_TOKEN or not self.AUTH_TOKEN.strip() or self.AUTH_TOKEN.strip() in {"<change_me>", "change_me"}:
+                raise ValueError("Notes require a non-placeholder AUTH_TOKEN")
+            if not self.NOTES_ROOT.is_absolute() or not self.ASSISTANT_STATE_DIR.is_absolute():
+                raise ValueError("NOTES_ROOT and ASSISTANT_STATE_DIR must be absolute paths")
+            notes_path = self.NOTES_ROOT.resolve()
+            state_path = self.ASSISTANT_STATE_DIR.resolve()
+            if notes_path == state_path or notes_path in state_path.parents or state_path in notes_path.parents:
+                raise ValueError("Notes and private state directories must be separate")
+        if self.OBSIDIAN_VAULT_NAME.strip() != self.OBSIDIAN_VAULT_NAME or any(
+            char in self.OBSIDIAN_VAULT_NAME for char in '/\\\x00\r\n'
+        ) or self.OBSIDIAN_VAULT_NAME in {".", ".."}:
+            raise ValueError("OBSIDIAN_VAULT_NAME must be a single nonempty directory name")
+
         minutes = self.REMINDER_MINUTES + self.IMPORTANT_REMINDER_MINUTES
         if any(m < 0 for m in minutes):
             raise ValueError("REMINDER_MINUTES and IMPORTANT_REMINDER_MINUTES must not be negative")
@@ -64,6 +86,10 @@ class Settings(BaseSettings):
     @property
     def calendar_enabled(self) -> bool:
         return self.GOOGLE_CREDENTIALS_FILE is not None
+
+    @property
+    def notes_enabled(self) -> bool:
+        return self.NOTES_ROOT is not None
 
     # An empty variable keeps the default
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")
