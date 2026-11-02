@@ -1,12 +1,13 @@
 # Personal Assistant
 
-ИИ-секретарь в Telegram: ставит события в Google Calendar и напоминает о них. Разговор ведёт агент [OpenClaw](https://docs.openclaw.ai) на моделях OpenAI. Этот сервис - его «руки»: Google Calendar и напоминания. Агент вызывает сервис по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
+ИИ-секретарь в Telegram: принимает текст и голосовые, ставит события в Google Calendar и напоминает о них. Голосовые распознаёт внешний Whisper-сервер, затем текст получает агент [OpenClaw](https://docs.openclaw.ai) на моделях OpenAI. Этот сервис - его «руки»: Google Calendar и напоминания. Агент вызывает сервис по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
 
 ```
  Вы ⇄ Telegram-бот (@BotFather)
           │ long polling
           ▼
    OpenClaw gateway ── модель OpenAI, навык secretary, утренняя сводка (automation)
+          ├─────────────► Whisper API: голосовое → текст для ассистента
           │ MCP: http://personal-assistant:8000/mcp/ + Bearer AUTH_TOKEN
           ▼
    personal-assistant ──────► Google Calendar API
@@ -19,6 +20,7 @@
 ## Возможности
 
 - **События.** Создание, перенос, удаление, повторяющиеся события (RRULE), события на весь день. Время агент передаёт в вашем часовом поясе.
+- **Голосовые.** OpenClaw отправляет аудио из Telegram на внешний Whisper, а распознанный текст обрабатывает как обычное сообщение владельца.
 - **Напоминания в Telegram.** За `REMINDER_MINUTES` до начала (по умолчанию 15 минут). Если у события в Google настроены свои уведомления, берутся они. Важные события получают ещё напоминания за сутки и за два часа (`IMPORTANT_REMINDER_MINUTES`). В напоминании - название, время, место и ссылка на событие.
 - **Важные события** помечаются красным цветом в Google Calendar (`IMPORTANT_COLOR_ID`). Так их видно в календаре, и событие можно сделать важным прямо из интерфейса Google, сменив цвет.
 - **Утренняя сводка** - автоматизация OpenClaw: события дня и важное на неделю.
@@ -110,6 +112,43 @@ scripts/openclaw.sh automations add --name "Утренняя сводка" \
 ```
 
 Проверка: напишите боту «что у меня завтра?», «поставь на пятницу в 15:00 созвон с Петей, это важно», «перенеси созвон на 16:00».
+
+## Голосовые через внешний Whisper
+
+OpenClaw скачивает голосовое Telegram и перед обработкой сообщения вызывает `openclaw/whisper/transcribe.mjs`. Скрипт загружает файл на `https://whisper.a16.ainergy.pro:8443/v1/audio/transcriptions`, извлекает `text` из JSON-ответа и передаёт в OpenClaw обычный текст. После этого ассистент отвечает или вызывает инструменты календаря. Отдельный Telegram-бот и новые MCP-инструменты для распознавания не нужны.
+
+Запрос использует `multipart/form-data`: `file`, `model=whisper-1`, `priority=0`, `response_format=json`, `language=ru`, `batch_size=4`, `vad_enabled=true`, `word_timestamps=false`. Размер аудио ограничен 20 МиБ, HTTP-запрос — 120 секундами, весь запуск обработчика — 150 секундами. Сервер должен принимать формат голосовых Telegram OGG/Opus.
+
+Параметры в `.env` относятся только к шлюзу OpenClaw:
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `WHISPER_URL` | `https://whisper.a16.ainergy.pro:8443/v1/audio/transcriptions` | Полный адрес распознавания |
+| `WHISPER_MODEL` | `whisper-1` | Имя модели в запросе |
+| `WHISPER_LANGUAGE` | `ru` | Язык аудио |
+| `WHISPER_API_KEY` | пусто | Необязательный Bearer-токен, если сервер потребует авторизацию |
+
+Без `WHISPER_API_KEY` запрос идёт без заголовка `Authorization`. Скрипт не читает `OPENAI_API_KEY`. При заданном `HTTPS_PROXY` Node использует настройки прокси; для прямого соединения с Whisper добавьте `whisper.a16.ainergy.pro` к существующему `NO_PROXY`, например `NO_PROXY=personal-assistant,localhost,127.0.0.1,whisper.a16.ainergy.pro`.
+
+Для уже развёрнутого сервера сначала перенесите на него обновлённые файлы проекта, включая `openclaw/whisper/transcribe.mjs` и Compose. Затем выполните в каталоге проекта:
+
+```bash
+# Пересоздание добавит read-only mount обработчика и переменные Whisper
+docker compose up -d --force-recreate openclaw-gateway
+
+# Применение полного патча: подставьте тот же id, что TELEGRAM_CHAT_ID
+TG_ID=123456789
+sed "s/<YOUR_TELEGRAM_USER_ID>/$TG_ID/g" openclaw/openclaw.patch.json5 | scripts/openclaw.sh config patch --stdin
+scripts/openclaw.sh config validate
+
+# Обновление инструкций ассистента
+mkdir -p data/openclaw/workspace/skills && cp -r openclaw/skills/secretary data/openclaw/workspace/skills/
+sudo chown -R 1000:1000 data/openclaw
+```
+
+Изменения в исходниках сами по себе не меняют конфигурацию на внешнем сервере. Обработчик монтируется в шлюз как `/opt/secretary/transcribe-whisper.mjs` и запускается штатным CLI-процессором аудио OpenClaw; профиль инструментов агента остаётся `messaging`.
+
+В списке распознавания задан только этот обработчик, без резервного облачного STT. Обработка медиа в OpenClaw выполняется по возможности: сбой Whisper не останавливает весь диалог. Если расшифровка отсутствует, навык предлагает повторить голосовое или написать текстом.
 
 ## Инструменты агента (MCP)
 
@@ -231,6 +270,7 @@ app/
 └── utils/                  lifespan (движок + MCP-сервер), логирование
 openclaw/
 ├── openclaw.patch.json5    патч конфига OpenClaw: Telegram, MCP, пояс, политика инструментов
+├── whisper/transcribe.mjs  отправка голосовых внешнему Whisper и извлечение текста
 └── skills/secretary/       навык агента: как работать с календарём
 scripts/
 ├── authorize_google.py     разовый вход в Google

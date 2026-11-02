@@ -1,5 +1,5 @@
 // Патч конфига OpenClaw для ИИ-секретаря. Применение (поверх конфига после onboard):
-//   docker compose run --rm -T openclaw-cli config patch --stdin < openclaw/openclaw.patch.json5
+//   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
 // Перед этим замените <YOUR_TELEGRAM_USER_ID> на свой числовой id (тот же, что TELEGRAM_CHAT_ID).
 // ${VAR} OpenClaw подставляет из окружения шлюза, то есть из .env.
 {
@@ -26,6 +26,22 @@
     // prompt injection. messaging пропускает MCP-инструменты, read нужен для чтения SKILL.md
     profile: "messaging",
     alsoAllow: ["read"],
+    media: {
+      // Голосовые сначала распознаёт внешний Whisper; stdout обработчика получает ассистент.
+      models: [
+        {
+          type: "cli",
+          command: "node",
+          args: ["--use-env-proxy", "/opt/secretary/transcribe-whisper.mjs", "{{AttachmentPath}}"],
+          capabilities: ["audio"],
+          timeoutSeconds: 150,
+        },
+      ],
+      audio: {
+        enabled: true,
+        maxBytes: 20971520,
+      },
+    },
   },
   skills: {
     entries: {

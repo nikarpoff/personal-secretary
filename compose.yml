@@ -37,8 +37,13 @@ services:
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_PORT: "18789"
       TZ: ${OPENCLAW_TZ:-UTC}
+      WHISPER_URL: ${WHISPER_URL:-https://whisper.a16.ainergy.pro:8443/v1/audio/transcriptions}
+      WHISPER_MODEL: ${WHISPER_MODEL:-whisper-1}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE:-ru}
+      WHISPER_API_KEY: ${WHISPER_API_KEY:-}
     volumes:
       - ./data/openclaw:/home/node/.openclaw
+      - ./openclaw/whisper/transcribe.mjs:/opt/secretary/transcribe-whisper.mjs:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
