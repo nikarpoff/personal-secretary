@@ -91,6 +91,13 @@ class AssistantEngine:
             raise NotesUnavailableError("Notes are not configured: set NOTES_ROOT and ASSISTANT_STATE_DIR")
         return self._notes
 
+    async def get_note_context(
+        self, query: str, kind: Optional[str] = None, tag: Optional[str] = None,
+    ) -> str:
+        return await asyncio.to_thread(
+            self._require_notes().get_context, query=query, kind=kind, tag=tag,
+        )
+
     async def search_notes(
         self, query: str = "", kind: Optional[str] = None, status: Optional[str] = None,
         tag: Optional[str] = None, include_archive: bool = False, limit: int = 5,

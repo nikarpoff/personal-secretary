@@ -33,6 +33,15 @@ async def _call(action: Awaitable[T]) -> T:
 
 
 def register_note_tools(server: MCPServer, engine: AssistantEngine) -> None:
+    @server.tool(annotations=READ_ONLY, structured_output=False)
+    async def get_note_context(
+        query: Annotated[str, Field(min_length=1, max_length=200, description="Short topic words for related local notes; not a full transcript")],
+        kind: Optional[Kind] = None,
+        tag: Optional[Tag] = None,
+    ) -> str:
+        """Local lexical context as compact JSON: up to 3 fragments, 4000 total characters including metadata; no archive, open tasks only. Insufficient evidence does not mean no notes exist."""
+        return await _call(engine.get_note_context(query, kind, tag))
+
     @server.tool(annotations=READ_ONLY)
     async def search_notes(
         query: Annotated[str, Field(max_length=200, description="Words in titles/body/tags/person aliases; empty for a short selection")] = "",

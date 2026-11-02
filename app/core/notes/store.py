@@ -30,6 +30,14 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 
 from app.core.exceptions import InvalidRequestError, NotFoundError
+from app.core.notes.context import (
+    MAX_CONTEXT_RESULTS,
+    ContextText,
+    excerpt,
+    pack_context,
+    topic_pattern,
+    topic_words,
+)
 from app.core.notes.models import (
     ALLOWED_DIRECTORIES,
     DIRECTORIES,
@@ -77,6 +85,7 @@ class NotesStore:
         self._last_scan = 0.0
         self._cache: dict[str, tuple[tuple, NoteRecord | None]] = {}
         self._by_id: dict[str, NoteRecord] = {}
+        self._context_cache: dict[str, ContextText] = {}
         self._invalid_count = 0
         self._duplicate_count = 0
         self._truncated = False
@@ -115,6 +124,7 @@ class NotesStore:
                 if fd is not None:
                     os.close(fd)
                     setattr(self, name, None)
+            self._context_cache.clear()
 
     @staticmethod
     def _open_absolute(path: Path, *, create: bool) -> int:
@@ -318,6 +328,70 @@ class NotesStore:
         if record.metadata["type"] == "person":
             result["aliases"] = record.metadata["aliases"]
         return result
+
+    @staticmethod
+    def _context_visible(record: NoteRecord, kind: str | None, tag: str | None) -> bool:
+        return (
+            not record.archived
+            and (kind is None or record.metadata["type"] == kind)
+            and (tag is None or tag in record.metadata["tags"])
+            and (record.metadata["type"] != "task" or record.metadata["status"] == "open")
+        )
+
+    def get_context(self, query: str, kind: str | None = None, tag: str | None = None) -> str:
+        """Select up to three current excerpts without an LLM or network request."""
+        if not isinstance(query, str) or not query.strip() or len(query) > 200:
+            raise InvalidRequestError("Context query must contain 1..200 characters of topic words")
+        if kind is not None and kind not in KINDS:
+            raise InvalidRequestError("Unsupported note type")
+        if tag is not None and (not isinstance(tag, str) or not 1 <= len(tag) <= 40):
+            raise InvalidRequestError("Tag must contain 1..40 characters")
+        words = topic_words(query)
+        phrase = normalized_name(query)
+        with self._lock:
+            self._refresh()
+            # Keep the same fail-closed scope as read_note when the index is incomplete.
+            if self._truncated or not words:
+                return pack_context([], index_truncated=self._truncated)
+            pattern = topic_pattern(words)
+            self._context_cache = {key: text for key, text in self._context_cache.items() if key in self._by_id}
+            candidates = []
+            for record in self._by_id.values():
+                if not self._context_visible(record, kind, tag):
+                    continue
+                text = self._context_cache.get(record.id)
+                if text is None or text.version != record.version:
+                    text = self._context_cache[record.id] = ContextText.from_record(record)
+                score = text.score(pattern, phrase)
+                if score[1]:
+                    updated = datetime.fromisoformat(record.metadata["updated_at"]).astimezone(timezone.utc)
+                    candidates.append((score, updated, record.id, record))
+            candidates.sort(key=lambda value: value[:3], reverse=True)
+            items = []
+            # Re-read only the selected files; do not return stale bodies after sync.
+            for _, _, note_id, indexed in candidates[:MAX_CONTEXT_RESULTS]:
+                try:
+                    with self._parent(indexed.relative_path) as (parent, name):
+                        raw, _ = self._read_file(parent, name)
+                    current = parse_note(raw, indexed.relative_path, self.tz)
+                    if current.id != note_id or not self._context_visible(current, kind, tag):
+                        continue
+                    text = ContextText.from_record(current)
+                    self._context_cache[note_id] = text
+                    if not text.score(pattern, phrase)[1]:
+                        continue
+                    content, offset, truncated = excerpt(current.body, words)
+                    item = {"id": current.id, "title": current.metadata["title"],
+                            "type": current.metadata["type"], "status": current.metadata["status"],
+                            "source": self._source(current), "version": current.version,
+                            "content": content, "offset": offset, "truncated": truncated}
+                    if current.metadata["type"] == "task":
+                        item.update({key: current.metadata[key] for key in ("due_at", "remind_at") if key in current.metadata})
+                    items.append(item)
+                except (OSError, InvalidRequestError, NotesConflictError):
+                    # An external sync may move, replace or temporarily invalidate a file.
+                    continue
+            return pack_context(items, words=words, has_more=len(candidates) > len(items))
 
     def search(self, query: str = "", kind: str | None = None, status: str | None = None,
                tag: str | None = None, include_archive: bool = False, limit: int = MAX_RESULTS) -> dict:
