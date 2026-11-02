@@ -11,7 +11,7 @@ from app.core.engine import AssistantEngine
 from app.core.exceptions import AppError
 
 T = TypeVar("T")
-Kind = Literal["note", "task", "idea", "knowledge"]
+Kind = Literal["note", "task", "idea", "knowledge", "person"]
 Status = Literal["open", "done", "cancelled", "archived"]
 NoteId = Annotated[str, Field(min_length=36, max_length=36, description="Stable UUID from a note result; never a path")]
 Version = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$", description="Current SHA-256 version from search/read; a conflict requires re-reading")]
@@ -19,6 +19,7 @@ Title = Annotated[str, Field(min_length=1, max_length=200)]
 Body = Annotated[str, Field(max_length=16000)]
 Tag = Annotated[str, Field(min_length=1, max_length=40)]
 Timestamp = Annotated[str, Field(max_length=64, description="ISO date AND time; naive time uses TIMEZONE; never invent a time")]
+Alias = Annotated[str, Field(min_length=1, max_length=80, description="An explicitly known name/nickname of this person")]
 READ_ONLY = ToolAnnotations(readOnlyHint=True)
 
 
@@ -34,7 +35,7 @@ async def _call(action: Awaitable[T]) -> T:
 def register_note_tools(server: MCPServer, engine: AssistantEngine) -> None:
     @server.tool(annotations=READ_ONLY)
     async def search_notes(
-        query: Annotated[str, Field(max_length=200, description="Literal words in titles/body/tags; empty for a short Inbox/ideas/tasks selection")] = "",
+        query: Annotated[str, Field(max_length=200, description="Words in titles/body/tags/person aliases; empty for a short selection")] = "",
         kind: Optional[Kind] = None,
         status: Optional[Status] = None,
         tag: Optional[Tag] = None,
@@ -62,9 +63,10 @@ def register_note_tools(server: MCPServer, engine: AssistantEngine) -> None:
         tags: Annotated[Optional[List[Tag]], Field(max_length=16)] = None,
         due_at: Optional[Timestamp] = None,
         remind_at: Optional[Timestamp] = None,
+        aliases: Annotated[Optional[List[Alias]], Field(max_length=8, description="Person cards only: known names/nicknames; do not invent identity")] = None,
     ) -> dict[str, Any]:
-        """Capture a note/idea/task. Task due_at is a deadline; only explicit remind_at sends Telegram. No calendar event is created."""
-        return await _call(engine.create_note(title, body, kind, tags, due_at, remind_at))
+        """Capture a note/idea/task/knowledge/person. Task due_at is a deadline; only remind_at sends Telegram. Person context stays in Markdown. No Calendar event is created."""
+        return await _call(engine.create_note(title, body, kind, tags, due_at, remind_at, aliases))
 
     @server.tool()
     async def append_note(note_id: NoteId, text: Body, expected_version: Version) -> dict[str, Any]:
@@ -83,12 +85,14 @@ def register_note_tools(server: MCPServer, engine: AssistantEngine) -> None:
         remind_at: Optional[Timestamp] = None,
         clear_due_at: bool = False,
         clear_remind_at: bool = False,
+        aliases: Annotated[Optional[List[Alias]], Field(max_length=8, description="Person cards only: replace known aliases; [] clears")] = None,
     ) -> dict[str, Any]:
         """Update specified fields of one note. Done/cancelled/archived tasks do not remind. Present bulk changes for confirmation first."""
         patch: dict[str, Any] = {
             key: value for key, value in {
                 "title": title, "body": body, "status": status, "tags": tags,
                 "due_at": due_at, "remind_at": remind_at,
+                "aliases": aliases,
             }.items() if value is not None
         }
         for field, clear in (("due_at", clear_due_at), ("remind_at", clear_remind_at)):

@@ -37,6 +37,7 @@ from app.core.notes.models import (
     MAX_DEPTH,
     MAX_FILES,
     MAX_NOTE_BYTES,
+    MAX_PEOPLE,
     MAX_READ_CHARS,
     MAX_RESULTS,
     MAX_SNIPPET_CHARS,
@@ -46,6 +47,7 @@ from app.core.notes.models import (
     NotesConflictError,
     NotesUnavailableError,
     canonical_id,
+    normalized_name,
     parse_note,
     render_note,
     timestamp,
@@ -310,9 +312,12 @@ class NotesStore:
         return source
 
     def _summary(self, record: NoteRecord) -> dict:
-        return {"id": record.id, "title": record.metadata["title"], "type": record.metadata["type"],
-                "status": "archived" if record.archived else record.metadata["status"],
-                "tags": record.metadata["tags"], "version": record.version, "source": self._source(record)}
+        result = {"id": record.id, "title": record.metadata["title"], "type": record.metadata["type"],
+                  "status": "archived" if record.archived else record.metadata["status"],
+                  "tags": record.metadata["tags"], "version": record.version, "source": self._source(record)}
+        if record.metadata["type"] == "person":
+            result["aliases"] = record.metadata["aliases"]
+        return result
 
     def search(self, query: str = "", kind: str | None = None, status: str | None = None,
                tag: str | None = None, include_archive: bool = False, limit: int = MAX_RESULTS) -> dict:
@@ -328,7 +333,8 @@ class NotesStore:
             raise InvalidRequestError("Tag must be at most 40 characters")
         with self._lock:
             self._refresh()
-            words = query.casefold().split()
+            normalized_query = normalized_name(query)
+            words = normalized_query.split()
             matches = []
             for record in self._by_id.values():
                 if record.archived and not include_archive:
@@ -340,10 +346,16 @@ class NotesStore:
                     continue
                 if tag is not None and tag not in record.metadata["tags"]:
                     continue
-                haystack = f"{record.metadata['title']}\n{' '.join(record.metadata['tags'])}\n{record.body}".casefold()
+                aliases = record.metadata["aliases"] if record.metadata["type"] == "person" else []
+                names = [normalized_name(record.metadata["title"]), *(normalized_name(alias) for alias in aliases)]
+                haystack = normalized_name(f"{' '.join(names)}\n{' '.join(record.metadata['tags'])}\n{record.body}")
                 if not all(word in haystack for word in words):
                     continue
-                score = sum(word in record.metadata["title"].casefold() for word in words)
+                score = sum(any(word in name for name in names) for word in words)
+                if record.metadata["type"] == "person" and normalized_query and normalized_query in names:
+                    # Rank actual names above incidental mentions in another biography;
+                    # a matching name is still not proof of unique real-world identity.
+                    score += 100
                 updated = datetime.fromisoformat(record.metadata["updated_at"]).astimezone(timezone.utc)
                 matches.append((score, updated, record))
             matches.sort(key=lambda value: (value[0], value[1], value[2].id), reverse=True)
@@ -351,7 +363,7 @@ class NotesStore:
             for _, _, record in matches[:limit]:
                 snippet = " ".join(record.body.split())
                 if words:
-                    position = snippet.casefold().find(words[0])
+                    position = normalized_name(snippet).find(words[0])
                     if position > 60:
                         snippet = "…" + snippet[position - 60:]
                 result = self._summary(record)
@@ -466,18 +478,23 @@ class NotesStore:
         return parse_note(raw, record.relative_path, self.tz)
 
     def create(self, title: str, body: str, kind: str = "note", tags: list[str] | None = None,
-               due_at: str | None = None, remind_at: str | None = None) -> dict:
+               due_at: str | None = None, remind_at: str | None = None,
+               aliases: list[str] | None = None) -> dict:
         with self._lock:
             self._require_ready()
             self._refresh(force=True)
             if self._truncated or len(self._cache) >= MAX_FILES:
                 raise NotesUnavailableError("Notes index is at its safety limit; reduce the Secretary scope before creating notes")
             if kind not in KINDS:
-                raise InvalidRequestError("type must be note, task, idea or knowledge")
+                raise InvalidRequestError("type must be note, task, idea, knowledge or person")
+            if aliases is not None and kind != "person":
+                raise InvalidRequestError("aliases can only be set on a person card")
             note_id = str(uuid4())
             now = datetime.now(self.tz).isoformat(timespec="seconds")
             meta = {"id": note_id, "title": title, "type": kind, "status": "open", "created_at": now,
                     "updated_at": now, "tags": tags or []}
+            if kind == "person":
+                meta["aliases"] = [] if aliases is None else aliases
             if due_at is not None:
                 meta["due_at"] = due_at
             if remind_at is not None:
@@ -506,8 +523,10 @@ class NotesStore:
             return self._update_record(self._lookup(note_id), expected_version, patch)
 
     def _update_record(self, current: NoteRecord, expected_version: str, patch: dict) -> dict:
-        if not isinstance(patch, dict) or not patch or set(patch) - {"title", "body", "status", "tags", "due_at", "remind_at"}:
+        if not isinstance(patch, dict) or not patch or set(patch) - {"title", "body", "status", "tags", "due_at", "remind_at", "aliases"}:
             raise InvalidRequestError("Unsupported or empty note update")
+        if "aliases" in patch and current.metadata["type"] != "person":
+            raise InvalidRequestError("aliases can only be changed on a person card")
         if current.archived:
             raise InvalidRequestError("Archived notes are read-only in version 1")
         if patch.get("status") == "archived":
@@ -554,6 +573,34 @@ class NotesStore:
                     )
             self._last_scan = 0.0
             return self._summary(actual)
+
+    def validate_people(self, person_ids: list[str]) -> list[str]:
+        """Validate a small explicit set of meeting references without returning biographies."""
+        if not isinstance(person_ids, list) or len(person_ids) > MAX_PEOPLE:
+            raise InvalidRequestError("person_ids must be a list of at most 10 person UUIDs")
+        identifiers = sorted({canonical_id(value) for value in person_ids})
+        with self._lock:
+            self._require_ready()
+            if not identifiers:
+                return []
+            self._refresh(force=True)
+            if self._truncated:
+                raise NotesUnavailableError("People cannot be linked while the notes index exceeds its safety limits")
+            for person_id in identifiers:
+                indexed = self._by_id.get(person_id)
+                if indexed is None:
+                    raise NotFoundError("Person not found, invalid or its id is duplicated")
+                try:
+                    with self._parent(indexed.relative_path) as (parent, name):
+                        raw, _ = self._read_file(parent, name)
+                    person = parse_note(raw, indexed.relative_path, self.tz)
+                except OSError as exc:
+                    raise NotFoundError("Person changed during synchronization; search again") from exc
+                if person.id != person_id:
+                    raise NotesConflictError("Person identity changed; search again")
+                if person.metadata["type"] != "person" or person.archived:
+                    raise InvalidRequestError("Meeting references must point to non-archived person cards")
+            return identifiers
 
     def _task_record(self, record: NoteRecord) -> dict:
         result = self._summary(record)

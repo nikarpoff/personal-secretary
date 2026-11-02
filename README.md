@@ -30,6 +30,7 @@
 - **Важные события** помечаются красным цветом в Google Calendar (`IMPORTANT_COLOR_ID`). Так их видно в календаре, и событие можно сделать важным прямо из интерфейса Google, сменив цвет.
 - **Утренняя сводка** - автоматизация OpenClaw: события дня и важное на неделю.
 - **Заметки Obsidian.** Inbox, идеи, задачи и справочные записи в обычном Markdown. Поиск возвращает максимум пять коротких результатов, чтение — выбранный фрагмент. Изменения проверяют версию файла, постоянное удаление заменено архивированием.
+- **Люди и встречи.** Карточки знакомых в `Secretary/People`: имена, варианты имени, контекст знакомства и ссылки на связанных людей. Встреча может хранить постоянные `person_ids`, чтобы ассистент находил нужную карточку.
 - **Напоминания о задачах.** Явное `remind_at` проверяет Python без LLM и создания события Calendar; отметки сохраняются после перезапуска. Срок `due_at` сам по себе не включает уведомление.
 - **Windows и Android.** Опциональный HTTPS WebDAV и Remotely Save синхронизируют полный vault; Python видит только Secretary, OpenClaw не получает mount vault.
 - **Интернет.** Поиск DuckDuckGo без отдельного поискового API-ключа и чтение публичных страниц. Ассистент может искать по просьбе и для актуальных вопросов, указывая источники; объём страниц ограничен.
@@ -44,6 +45,9 @@ Compose не создаёт пустой vault вместо отсутствую
 
 Поиск DuckDuckGo требует установки плагина в OpenClaw перед применением патча.
 Подключение к существующему VPS, ограничения и диагностика описаны в [docs/web-search.md](docs/web-search.md).
+
+Справочник людей, варианты имён и привязка встреч описаны в [docs/people.md](docs/people.md).
+Каждая карточка открывается обычной отдельной вкладкой Obsidian и синхронизируется вместе с vault.
 
 ## Быстрый старт
 
@@ -82,7 +86,7 @@ openssl rand -hex 32   # для OPENCLAW_GATEWAY_TOKEN
 
 ```bash
 mkdir -p data/openclaw secrets data/assistant-state
-mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,Archive} data/obsidian/Personal
+mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,People,Archive} data/obsidian/Personal
 chmod 700 data/assistant-state
 sudo chown -R 1000:1000 data/openclaw     # OpenClaw работает от пользователя node (uid 1000)
 ```
@@ -188,13 +192,13 @@ sudo chown -R 1000:1000 data/openclaw
 
 | Инструмент | Что делает |
 |---|---|
-| `list_events` | События периода (по умолчанию сегодня и неделя вперёд) и текущее время `now` |
-| `create_event` | Новое событие: время, длительность, место, `important`, `remind_minutes`, `recurrence` |
-| `update_event` | Меняет только переданные поля; при переносе длительность сохраняется |
+| `list_events` | События периода, связанные `person_ids` и текущее время `now` |
+| `create_event` | Новое событие: время, длительность, место, `important`, `remind_minutes`, `recurrence`, необязательные `person_ids` |
+| `update_event` | Меняет только переданные поля; при переносе длительность сохраняется; `person_ids: []` снимает связи |
 | `delete_event` | Удаляет событие; `recurring_event_id` удаляет всю серию |
 | `search_notes` | Поиск и фильтры заметок, максимум 5 коротких результатов; без Archive по умолчанию |
 | `read_note` | Выбранный UUID, раздел или фрагмент до 4000 символов с версией и источником |
-| `create_note` | Создать note/task/idea/knowledge; вернуть короткую квитанцию |
+| `create_note` | Создать note/task/idea/knowledge/person; у карточки человека возможны `aliases`; вернуть короткую квитанцию |
 | `append_note` / `update_note` | Дополнить/изменить запись, проверив `expected_version` |
 | `archive_note` | Архивировать одну запись с проверкой версии |
 | `notes_status` | Текущее время и диагностика индекса/доставки без содержимого заметок |

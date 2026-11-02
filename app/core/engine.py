@@ -21,6 +21,7 @@ from app.core.exceptions import CalendarNotConfiguredError, InvalidRequestError,
 from app.core.reminders import reminder_offsets
 from app.core.notes import NotesStore, NotesUnavailableError
 from app.core.note_reminders import NoteReminderScheduler
+from app.core.people import set_event_person_ids
 from app.core.scheduler import ReminderScheduler
 from app.core.upstream import GoogleCalendarClient, TelegramClient
 from app.core.upstream.calendar import all_day_end, reminders_body, time_body, to_event
@@ -106,11 +107,11 @@ class AssistantEngine:
 
     async def create_note(
         self, title: str, body: str, kind: str = "note", tags: Optional[List[str]] = None,
-        due_at: Optional[str] = None, remind_at: Optional[str] = None,
+        due_at: Optional[str] = None, remind_at: Optional[str] = None, aliases: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         result = await asyncio.to_thread(
             self._require_notes().create, title=title, body=body, kind=kind,
-            tags=tags or [], due_at=due_at, remind_at=remind_at,
+            tags=tags or [], due_at=due_at, remind_at=remind_at, aliases=aliases,
         )
         self._note_scheduler.request_check()
         return result
@@ -177,6 +178,12 @@ class AssistantEngine:
         if request.recurrence:
             rule = request.recurrence.strip()
             body["recurrence"] = [rule if rule.upper().startswith("RRULE:") else f"RRULE:{rule}"]
+        if request.person_ids is not None:
+            person_ids = (
+                await asyncio.to_thread(self._require_notes().validate_people, request.person_ids)
+                if request.person_ids else []
+            )
+            set_event_person_ids(body, person_ids)
 
         item = await calendar.insert_event(body)
         event = self._event_changed(item)
@@ -205,6 +212,12 @@ class AssistantEngine:
             item.pop("colorId")
         if request.remind_minutes is not None:
             item["reminders"] = reminders_body(self._check_minutes(request.remind_minutes))
+        if request.person_ids is not None:
+            person_ids = (
+                await asyncio.to_thread(self._require_notes().validate_people, request.person_ids)
+                if request.person_ids else []
+            )
+            set_event_person_ids(item, person_ids)
 
         event = self._event_changed(await calendar.update_event(event_id, item))
         logger.info("Event updated: '{}'", event.id)

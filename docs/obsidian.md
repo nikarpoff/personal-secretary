@@ -14,6 +14,7 @@ data/
 │   │   ├── Tasks/
 │   │   ├── Ideas/
 │   │   ├── Knowledge/
+│   │   ├── People/                   # карточки людей и контекст встреч
 │   │   ├── Archive/
 │   │   └── .secretary-history/        # служебные предыдущие версии, не читать через MCP
 │   ├── Personal/                     # только Obsidian/WebDAV, не ассистент
@@ -78,7 +79,7 @@ OBSIDIAN_SYNC_DOMAIN=notes.example.com
 Подготовьте каталоги и отдельный секрет WebDAV:
 
 ```bash
-mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,Archive}
+mkdir -p data/obsidian/Secretary/{Inbox,Tasks,Ideas,Knowledge,People,Archive}
 mkdir -p data/obsidian/Personal data/assistant-state data/webdav/{caddy-data,caddy-config,private}
 cp deploy/webdav/wsgidav.example.yaml data/webdav/private/webdav.yaml
 chmod 700 data/webdav/private
@@ -175,10 +176,15 @@ remind_at: '2026-11-04T10:00:00+03:00'
 ```
 
 `id` — стабильный UUID: при переносе или переименовании файла не меняйте его и не копируйте
-одинаковый id в разные заметки. `type` принимает `note`, `task`, `idea`, `knowledge`, статус —
+одинаковый id в разные заметки. `type` принимает `note`, `task`, `idea`, `knowledge`, `person`, статус —
 `open`, `done`, `cancelled`, `archived`. Начальные каталоги соответствуют типам: Inbox, Tasks,
-Ideas, Knowledge. Архивирование сохраняет UUID и переносит запись в Archive.
+Ideas, Knowledge, People. Архивирование сохраняет UUID и переносит запись в Archive.
 Заголовок `title` обязателен; H1 в теле можно добавлять по желанию.
+
+Для `type: person` поле `aliases` хранит до 8 вариантов имени по 80 символов. Карточки
+ищутся по имени и этим вариантам, а затем читаются выбранными фрагментами. Формат и привязка
+встреч по `person_ids` описаны в [справочнике людей](people.md). Каталог People создаётся
+backend при инициализации внутри уже существующего mount Secretary; новые mounts не нужны.
 
 `created_at` и `updated_at` обязательны; `tags` — список до 16 тегов по 40 символов.
 `due_at` и `remind_at` необязательны и разрешены только для задач. Без явного смещения время
@@ -199,7 +205,7 @@ Markdown-checkbox в теле не изменяет статус автомат�
 |---|---|
 | `search_notes` | Лексический поиск/фильтры, максимум 5 результатов, короткие выдержки; Archive исключён по умолчанию |
 | `read_note` | Выбранный UUID, раздел либо фрагмент до 4000 символов; возвращает версию и источник |
-| `create_note` | Создание Markdown; короткая квитанция с id, названием и ссылкой |
+| `create_note` | Создание Markdown, включая `kind: person` с вариантами имени `aliases`; короткая квитанция |
 | `append_note` | Дополнение выбранной записи с `expected_version` |
 | `update_note` | Изменение переданных полей/статуса с `expected_version`; явные `clear_due_at`/`clear_remind_at` очищают время |
 | `archive_note` | Архивирование одной записи с `expected_version`, без постоянного удаления |

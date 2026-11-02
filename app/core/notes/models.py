@@ -17,10 +17,13 @@ from yaml.events import AliasEvent
 from app.core.clock import parse_moment
 from app.core.exceptions import AppError, InvalidRequestError
 
-KINDS = frozenset({"note", "task", "idea", "knowledge"})
+KINDS = frozenset({"note", "task", "idea", "knowledge", "person"})
 STATUSES = frozenset({"open", "done", "cancelled", "archived"})
-DIRECTORIES = {"note": "Inbox", "task": "Tasks", "idea": "Ideas", "knowledge": "Knowledge"}
+DIRECTORIES = {"note": "Inbox", "task": "Tasks", "idea": "Ideas", "knowledge": "Knowledge", "person": "People"}
 ALLOWED_DIRECTORIES = frozenset({*DIRECTORIES.values(), "Archive"})
+MAX_ALIASES = 8
+MAX_ALIAS_CHARS = 80
+MAX_PEOPLE = 10
 MAX_NOTE_BYTES = 128 * 1024
 MAX_BODY_CHARS = 32_000
 MAX_FRONTMATTER_BYTES = 8 * 1024
@@ -88,6 +91,29 @@ def canonical_id(value: str) -> str:
     return result
 
 
+def normalized_name(value: str) -> str:
+    """Case/whitespace-insensitive name matching, including Russian е/ё."""
+    return " ".join(value.casefold().replace("ё", "е").split())
+
+
+def validate_aliases(value: Any) -> list[str]:
+    if not isinstance(value, list) or len(value) > MAX_ALIASES:
+        raise InvalidRequestError("Person aliases must be a list of at most 8 names")
+    result: list[str] = []
+    seen: set[str] = set()
+    for alias in value:
+        if (
+            not isinstance(alias, str) or not alias.strip() or len(alias) > MAX_ALIAS_CHARS
+            or any(char in alias for char in "\r\n\x00")
+        ):
+            raise InvalidRequestError("Each person alias must contain 1..80 characters on one line")
+        key = normalized_name(alias)
+        if key not in seen:
+            result.append(alias.strip())
+            seen.add(key)
+    return result
+
+
 def timestamp(value: Any, tz: ZoneInfo, field: str) -> datetime | None:
     if value is None:
         return None
@@ -118,13 +144,17 @@ def validate_metadata(meta: dict, tz: ZoneInfo) -> dict:
     result = dict(meta)
     result["id"] = canonical_id(meta.get("id"))
     if not isinstance(meta.get("type"), str) or meta["type"] not in KINDS:
-        raise InvalidRequestError("type must be note, task, idea or knowledge")
+        raise InvalidRequestError("type must be note, task, idea, knowledge or person")
     if not isinstance(meta.get("status"), str) or meta["status"] not in STATUSES:
         raise InvalidRequestError("status must be open, done, cancelled or archived")
     title = meta.get("title")
-    if not isinstance(title, str) or not title.strip() or len(title) > 200 or "\n" in title or "\r" in title:
+    if not isinstance(title, str) or not title.strip() or len(title) > 200 or any(char in title for char in "\r\n\x00"):
         raise InvalidRequestError("title must contain 1..200 characters on one line")
     result["title"] = title.strip()
+    if meta["type"] == "person":
+        result["aliases"] = validate_aliases(meta.get("aliases", []))
+    # `aliases` is also a native Obsidian property. Existing non-person metadata
+    # stays untouched; only person aliases are exposed/searchable by this feature.
     tags = meta.get("tags", [])
     if not isinstance(tags, list) or len(tags) > 16 or any(not isinstance(t, str) or not TAG.fullmatch(t) for t in tags):
         raise InvalidRequestError("tags must be at most 16 names of 1..40 letters, numbers, _, / or -")

@@ -1,5 +1,5 @@
 from datetime import date, datetime, timedelta
-from typing import List, Optional, Sequence
+from typing import Annotated, List, Optional, Sequence
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from app.core.entities import Event
 
 TIME_HINT = "local time 'YYYY-MM-DDTHH:MM' or a date 'YYYY-MM-DD' for an all-day event; an explicit offset is honored"
+PersonId = Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
 
 
 def local_iso(moment: Optional[datetime], tz: ZoneInfo) -> Optional[str]:
@@ -30,6 +31,7 @@ class EventCreateRequest(BaseModel):
     important: bool = Field(False, description="Important events get extra early reminders and the red color in Google Calendar")
     remind_minutes: Optional[List[int]] = Field(None, description="Reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")
     recurrence: Optional[str] = Field(None, description="RRULE of a recurring event, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=MO'")
+    person_ids: Optional[List[PersonId]] = Field(None, max_length=10, description="Selected Obsidian person-card UUIDs; does not invite attendees")
 
 
 class EventUpdateRequest(BaseModel):
@@ -41,6 +43,7 @@ class EventUpdateRequest(BaseModel):
     location: Optional[str] = Field(None, description="New place; empty string clears it")
     important: Optional[bool] = Field(None, description="Mark or unmark the event as important")
     remind_minutes: Optional[List[int]] = Field(None, description="New reminders N minutes before the start; [] for none")
+    person_ids: Optional[List[PersonId]] = Field(None, max_length=10, description="Replace person-card references; [] clears them; omitted keeps existing references")
 
 
 # ---- responses -------------------------------------------------------------
@@ -58,6 +61,7 @@ class EventInfo(BaseModel):
     reminders: List[int] = Field([], description="Telegram reminders, minutes before the start")
     recurring_event_id: Optional[str] = Field(None, description="Id of the whole series for an occurrence of a recurring event")
     link: Optional[str] = Field(None, description="Event page in Google Calendar")
+    person_ids: List[str] = Field(default_factory=list, max_length=10, description="Person-card UUIDs; read only selected cards for meeting context")
 
     @classmethod
     def from_event(cls, event: Event, tz: ZoneInfo, reminders: Sequence[int]) -> "EventInfo":
@@ -78,6 +82,7 @@ class EventInfo(BaseModel):
             reminders=[] if event.all_day else list(reminders),
             recurring_event_id=event.recurring_event_id,
             link=event.html_link,
+            person_ids=list(event.person_ids),
         )
 
 

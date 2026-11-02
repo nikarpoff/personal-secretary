@@ -20,6 +20,7 @@ class Event:
     recurring_event_id: Optional[str] = None
     html_link: Optional[str] = None
     created: Optional[datetime] = None
+    person_ids: Tuple[str, ...] = ()  # Obsidian person cards, not Calendar attendee addresses
 
     @property
     def series_id(self) -> str:
