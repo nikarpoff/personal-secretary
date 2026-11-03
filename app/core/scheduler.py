@@ -15,7 +15,7 @@ from typing import List, Optional
 
 from loguru import logger
 
-from app.core.clock import utc_now
+from app.utils.time import utc_now
 from app.core.config import CALENDAR_SETTINGS, REMINDER_SETTINGS as CFG, Settings
 from app.core.entities import Event
 from app.core.exceptions import AppError
@@ -128,10 +128,9 @@ class ReminderScheduler:
 
     async def _send_due_reminders(self) -> int:
         now = utc_now()
-        events = [event for event in self._events if event.start > now]
-        sent = await self._store.sent_marks([event.id for event in events])
+        sent = await self._store.sent_marks([event.id for event in self._events])
         reminders = due_reminders(
-            events, sent, now, self.settings.REMINDER_MINUTES, self.settings.IMPORTANT_REMINDER_MINUTES
+            self._events, sent, now, self.settings.REMINDER_MINUTES, self.settings.IMPORTANT_REMINDER_MINUTES
         )
 
         delivered = 0

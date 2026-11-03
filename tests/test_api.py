@@ -60,3 +60,8 @@ def test_mcp_tools_reach_the_engine(client):
 
     invalid = _mcp(client, "tools/call", {"name": "create_event", "arguments": {"title": "", "start": "2030-01-01T10:00"}})
     assert invalid["isError"] and "title" in json.dumps(invalid)
+
+
+def test_reminder_minutes_are_checked_by_the_contract(client):
+    response = client.post("/v1/events", json={"title": "x", "start": "2030-01-01T10:00", "remind_minutes": [-5]}, headers=AUTH)
+    assert response.status_code == 422

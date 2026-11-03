@@ -20,6 +20,7 @@ class Event:
     recurring_event_id: Optional[str] = None
     html_link: Optional[str] = None
     created: Optional[datetime] = None
+    people: Tuple[str, ...] = ()    # permalinks of person notes in Basic Memory
 
 
 @dataclass(frozen=True)

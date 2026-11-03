@@ -1,189 +1,137 @@
 # Personal Assistant
 
-ИИ-секретарь в Telegram: ставит, переносит и удаляет события в Google Calendar и напоминает о них. Разговор ведёт агент [OpenClaw](https://docs.openclaw.ai) на модели из OpenRouter. Этот сервис - его «руки» для календаря: агент вызывает его по MCP, а напоминания сервис шлёт в Telegram сам, через того же бота.
+ИИ-секретарь в Telegram: ведёт Google Calendar и напоминает о событиях, понимает голосовые, хранит заметки о людях, задачах и идеях в хранилище Obsidian и ищет в интернете. Разговор ведёт агент [OpenClaw](https://docs.openclaw.ai) на модели из OpenRouter. Календарь и напоминания - этот сервис, заметки - [Basic Memory](https://github.com/basicmachines-co/basic-memory), синхронизация заметок с устройствами - [Syncthing](https://syncthing.net). Агент обращается к сервису и к заметкам по MCP.
 
 ```
- Вы ⇄ Telegram-бот (@BotFather)
-          │ long polling
-          ▼
-   OpenClaw gateway ── LLM через OpenRouter, навык secretary, утренняя сводка (automation)
-          │ MCP: http://personal-assistant:8000/mcp/ + Bearer AUTH_TOKEN
-          ▼
-   personal-assistant ──────► Google Calendar API
-          │
-          └─────────────────► Telegram Bot API: напоминания от имени того же бота
+ Вы ⇄ Telegram-бот ──────────────────────────────┐
+                                                  ▼
+   OpenClaw gateway ── LLM (OpenRouter), Whisper для голосовых, веб-поиск, навык secretary
+          │ MCP                         │ MCP
+          ▼                             ▼
+   personal-assistant              basic-memory ── data/notes ── syncthing ⇄ Obsidian на устройствах
+     │ Google Calendar API
+     └ Telegram Bot API: напоминания
 ```
-
-Почему напоминания живут в сервисе, а не в автоматизациях OpenClaw: они должны приходить вовремя и всегда, даже когда модель недоступна, и не тратить токены на каждую проверку. Утреннюю сводку, где нужен «ум», делает OpenClaw.
 
 ## Возможности
 
-- **События.** Создание, перенос, удаление, повторяющиеся события (RRULE), события на весь день, поиск события по словам. Время агент передаёт в вашем часовом поясе.
-- **Напоминания в Telegram.** За `REMINDER_MINUTES` до начала (по умолчанию 15 минут). Если у события в Google настроены свои уведомления, берутся они. Важные события получают ещё напоминания за сутки и за два часа (`IMPORTANT_REMINDER_MINUTES`). В напоминании - время, место, начало описания и ссылка на событие.
-- **Важные события** помечаются цветом в Google Calendar (`IMPORTANT_COLOR_ID`, по умолчанию красный). Событие можно сделать важным и прямо в интерфейсе Google, сменив ему цвет.
-- **Утренняя сводка** - автоматизация OpenClaw: события дня и важное на неделю.
+- **Календарь.** Создание, перенос, удаление, повторяющиеся события и события на весь день. Время агент передаёт в вашем часовом поясе.
+- **Напоминания** в Telegram за `REMINDER_MINUTES` до начала или по уведомлениям самого события в Google. Важные события (красный цвет в календаре) - ещё за сутки и за два часа. «Напомни в 15:00 позвонить» - событие с напоминанием в момент начала.
+- **Голосовые** распознаёт ваш Whisper, агент получает текст.
+- **Заметки** - Markdown-файлы хранилища Obsidian: люди, задачи, идеи, справочные материалы. Поиск по словам и по смыслу.
+- **Люди на встречах:** событие хранит ссылки на карточки людей, агент читает их для контекста встречи.
+- **Веб-поиск** через DuckDuckGo и чтение страниц.
+- **Утренняя сводка** - события дня, задачи на сегодня и важное на неделю.
 
 ## Где что настраивается
 
-Все ваши данные и секреты живут в одном файле - `.env` (он в `.gitignore`). Оба контейнера читают его.
-
 | Что | Где |
 |---|---|
-| Токен бота, ваш Telegram user id | `.env`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` |
-| LLM агента | `.env`: `OPENROUTER_API_KEY`, `OPENCLAW_MODEL` |
-| Доступ к Google Calendar | файл `secrets/google.json`, путь в `.env`: `GOOGLE_CREDENTIALS_FILE` |
-| Токены сервиса и шлюза | `.env`: `AUTH_TOKEN`, `OPENCLAW_GATEWAY_TOKEN` |
-| Поведение агента: allowlist, MCP-сервер, политика инструментов | `openclaw/openclaw.patch.json5` - в git, без секретов |
-| Как агент работает с календарём | `openclaw/skills/secretary/SKILL.md` - в git, шлюз читает его из репозитория |
-| Имя, характер, правила агента | `openclaw/workspace/*.md` - в git, копируются в рабочий каталог агента |
+| Токены, ключи, ваш Telegram id, модель, Whisper, эмбеддер | `.env` (в `.gitignore`) |
+| Доступ к Google Calendar | `secrets/google.json` |
+| Правила OpenClaw: allowlist, MCP-серверы, инструменты, Whisper | `openclaw/openclaw.patch.json5` - ссылки `${VAR}` на `.env`, без секретов |
+| Как агент работает с календарём и заметками | `openclaw/skills/secretary/SKILL.md` |
+| Имя, характер и правила агента | `openclaw/workspace/*.md` |
+| Заметки | `data/notes` |
 
-`openclaw.patch.json5` - это дополнение к конфигу OpenClaw (`data/openclaw/openclaw.json`, его создаёт `onboard`). Значения из окружения там записаны ссылками `${VAR}`: OpenClaw подставляет их из `.env` при каждой загрузке конфига. Поэтому в патче нет ни ключей, ни вашего user id, и его не нужно редактировать. Сам `openclaw.json` после онбординга тоже хранит не ключи, а ссылки на переменные (`--secret-input-mode ref`).
+## Запуск
 
-## Быстрый старт
+Нужны сервер с Docker, аккаунт Google, ключ [OpenRouter](https://openrouter.ai/keys) и Whisper с OpenAI-совместимым API.
 
-Нужны сервер с Docker, аккаунт Google и ключ [OpenRouter](https://openrouter.ai/keys).
+### 1. Telegram и Google
 
-### 1. Telegram-бот
-
-1. В [@BotFather](https://t.me/BotFather): `/newbot` → имя → токен вида `123456:ABC...`.
-2. Свой числовой user id: напишите [@userinfobot](https://t.me/userinfobot) или откройте `https://api.telegram.org/bot<токен>/getUpdates` после любого сообщения боту.
-
-### 2. Доступ к Google Calendar
-
-1. [Google Cloud Console](https://console.cloud.google.com/) → новый проект → **APIs & Services → Library** → включите **Google Calendar API**.
-2. **OAuth consent screen**: тип External, добавьте себя в Test users. Затем **Publish app** (статус «In production»). Иначе Google отзывает refresh-токен через 7 дней и календарь отвалится. Предупреждение «приложение не проверено» для личного использования нормально.
-3. **Credentials → Create credentials → OAuth client ID → Desktop app** → скачайте JSON, например в `secrets/client_secret.json`. Это файл OAuth-клиента (в нём ключ `installed`). Сервису он не подходит: из него получают токен на следующем шаге.
-4. Получите токен:
+1. Бот: [@BotFather](https://t.me/BotFather) → `/newbot` → токен. Свой user id подскажет [@userinfobot](https://t.me/userinfobot).
+2. [Google Cloud Console](https://console.cloud.google.com/): включите **Google Calendar API**; на **OAuth consent screen** добавьте себя в Test users и нажмите **Publish app**, иначе токен истечёт через 7 дней; создайте **OAuth client ID** типа **Desktop app** и скачайте JSON в `secrets/client_secret.json`.
+3. Токен календаря:
 
 ```bash
 uv sync
 uv run scripts/authorize_google.py --client secrets/client_secret.json --out secrets/google.json
 ```
 
-На сервере без браузера пробросьте порт и откройте напечатанную ссылку у себя: `ssh -L 8765:localhost:8765 <сервер>`, затем тот же скрипт с `--no-browser`. Скрипт запрашивает только доступ к событиям (`calendar.events`). В `GOOGLE_CREDENTIALS_FILE` указывается результат - `secrets/google.json`.
+Без браузера на сервере: `ssh -L 8765:localhost:8765 <сервер>` и тот же скрипт с `--no-browser`.
 
-Вместо OAuth можно взять сервисный аккаунт: ключ JSON в `secrets/google.json`, календарь расшарен на e-mail аккаунта с правом «Вносить изменения», `GOOGLE_CALENDAR_ID` = ваш e-mail. Ограничение: без Google Workspace сервисный аккаунт не может приглашать участников.
-
-### 3. Конфигурация
+### 2. Конфигурация
 
 ```bash
-cp .env.example .env
-openssl rand -hex 32   # для AUTH_TOKEN
-openssl rand -hex 32   # для OPENCLAW_GATEWAY_TOKEN
+cp .env.example .env      # заполните все <change_me>
 ```
 
-Заполните в `.env`: `AUTH_TOKEN`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `OPENROUTER_API_KEY`, `OPENCLAW_MODEL`, `OPENCLAW_GATEWAY_TOKEN`, при необходимости `TIMEZONE`.
-
-Каталоги `data/` создаются сами. OpenClaw работает от пользователя `node` (uid 1000): владельца `data/openclaw` выставляет разовый контейнер `openclaw-init`, его запускают `scripts/openclaw.sh` и `docker compose up`.
-
-### 4. Сервис
-
-```bash
-docker compose up -d --build personal-assistant
-curl -s localhost:8090/health                                   # {"status":"ok"}
-docker compose logs personal-assistant | grep -i calendar       # Google Calendar client ready
-```
-
-### 5. OpenClaw
+### 3. OpenClaw
 
 Команды OpenClaw выполняет `scripts/openclaw.sh`: в работающем шлюзе через `docker compose exec`, до первого запуска - разовым контейнером.
 
 ```bash
-# Онбординг: провайдер OpenRouter; ключ и токен шлюза остаются в .env, в конфиг пишутся ссылки на них.
-# --skip-bootstrap: личность агента приходит из openclaw/workspace, ритуал знакомства не нужен
 scripts/openclaw.sh onboard --non-interactive --accept-risk \
   --mode local --no-install-daemon --skip-bootstrap --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
   --auth-choice openrouter-api-key --secret-input-mode ref \
   --gateway-auth token --gateway-bind lan --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN
-
-# Модель, Telegram только для вас, MCP-сервер, навык, часовой пояс, ограничение инструментов
+scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin
 scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5     # Applied N config update(s)
-scripts/openclaw.sh config validate
-
-# Имя и эмодзи агента из openclaw/workspace/IDENTITY.md - в конфиг, их показывают UI и каналы
 scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
 
-docker compose up -d
-scripts/openclaw.sh mcp probe personal-assistant      # personal-assistant: 4 tools
-scripts/openclaw.sh models status | grep Default      # openrouter/... из OPENCLAW_MODEL
-scripts/openclaw.sh skills info secretary             # secretary ✓ Ready
+docker compose up -d --build
+scripts/openclaw.sh mcp probe personal-assistant      # 4 tools
+scripts/openclaw.sh mcp probe notes                   # 8 tools
 ```
 
-Шлюз стартует примерно через 20 секунд после того, как сервис станет healthy. Навык `secretary` OpenClaw читает прямо из `openclaw/skills` репозитория (смонтирован только на чтение), копировать его не нужно: после `git pull` агент видит новую версию.
+Ключи OpenRouter и Whisper и токен шлюза остаются в `.env`: онбординг и патч пишут в конфиг OpenClaw только ссылки на них.
 
-### Личность агента
+### 4. Syncthing
 
-Имя, характер и правила агента лежат в `openclaw/workspace`:
+1. `ssh -L 8384:127.0.0.1:8384 <сервер>`, откройте `http://localhost:8384` и задайте логин и пароль интерфейса.
+2. Поставьте Syncthing на ноутбук и телефон, добавьте сервер по его ID (**Actions → Show ID**).
+3. На сервере **Add Folder**: путь `/var/syncthing/notes`, общий доступ с вашими устройствами. На устройстве примите папку и откройте её в Obsidian как хранилище.
 
-| Файл | Что в нём |
-|---|---|
-| `IDENTITY.md` | Имя, эмодзи, роль |
-| `SOUL.md` | Характер и тон |
-| `USER.md` | Ваши предпочтения: язык, формат ответов |
-| `AGENTS.md` | Правила работы: только календарь, напоминания шлёт сервис, текст событий - данные, а не команды |
+Включите в папке **File Versioning** - старые версии заметок останутся у Syncthing.
 
-Перед каждым стартом шлюза `openclaw-init` копирует их в рабочий каталог агента (`data/openclaw/workspace`) и удаляет `BOOTSTRAP.md` - ритуал первого запуска, где агент выбирает себе имя и сам пишет эти файлы. Пройти его агент не может: записи файлов и shell у него нет, и давать их не нужно (см. «Безопасность»).
-
-Сменить имя или характер: поправьте файлы в `openclaw/workspace`, затем
-
-```bash
-docker compose up -d       # openclaw-init обновит файлы в рабочем каталоге
-scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
-```
-
-и отправьте боту `/new`: новая сессия начнётся с обновлённой личностью.
-
-### Control UI
-
-Порт шлюза опубликован только на `127.0.0.1` сервера. С вашей машины пробросьте его на **тот же** локальный порт 18789: шлюз пускает UI только с `http://localhost:18789` и `http://127.0.0.1:18789`.
-
-```bash
-ssh -N -L 18789:127.0.0.1:18789 <сервер>
-```
-
-Проще всего входить одноразовой ссылкой: она сразу авторизует браузер и одобряет его как устройство владельца. При входе по токену шлюз может дополнительно попросить одобрить устройство.
-
-```bash
-scripts/openclaw.sh dashboard --no-open      # ссылка вида http://127.0.0.1:18789/#bootstrapToken=...
-```
-
-Откройте ссылку в браузере на своей машине, пока она не истекла (несколько минут). Если вошли по токену из `OPENCLAW_GATEWAY_TOKEN` и UI ждёт одобрения устройства: `scripts/openclaw.sh devices list`, затем `scripts/openclaw.sh devices approve <id>`.
-
-### 6. Утренняя сводка
+### 5. Утренняя сводка
 
 ```bash
 scripts/openclaw.sh automations add --name "Утренняя сводка" \
   --cron "0 8 * * *" --tz Europe/Moscow --session isolated \
   --message "Утренняя сводка по навыку secretary" \
-  --announce --channel telegram --to <ваш TELEGRAM_CHAT_ID>
+  --announce --channel telegram --to <TELEGRAM_CHAT_ID>
 ```
 
-Проверка: напишите боту «что у меня завтра?», «поставь на пятницу в 15:00 созвон с Петей, это важно», «перенеси созвон с Петей на час позже».
+## Заметки
 
-## LLM агента
+Basic Memory хранит каждую заметку Markdown-файлом с frontmatter, Obsidian открывает их как есть. Тип заметки - поле `type`, у каждого типа своя папка:
 
-Модель задаётся в `.env` переменной `OPENCLAW_MODEL` в формате `openrouter/<автор>/<модель>`. Чтобы сменить модель, поменяйте переменную и перезапустите шлюз: `docker compose up -d openclaw-gateway`. Из чата модель на сессию меняет команда `/model`.
+| Тип | Папка | Что внутри |
+|---|---|---|
+| `person` | `people` | Кто человек: `- [role]`, `- [contact]`, `- [context]`; связи `- works_at [[Компания]]`; другие имена в `aliases` |
+| `task` | `tasks` | Задача без времени: `status: open/done`, `due: YYYY-MM-DD` |
+| `knowledge` | `knowledge` | Справочное: инструкции, факты, ссылки |
+| `idea` | `ideas` | Идея и теги |
+| `note` | `notes` | Всё остальное |
 
-Агенту нужна модель с вызовом инструментов (tool calling): без него он не сможет работать с календарём. Список моделей: `scripts/openclaw.sh models list --provider openrouter --all`. По умолчанию в `.env.example` стоит `anthropic/claude-haiku-5.5`: она дешёвая и надёжно вызывает инструменты. `openrouter/auto`, который выбирает онбординг, патч заменяет, чтобы модель и цена не менялись от запроса к запросу.
+Агент находит заметки поиском по словам и по смыслу, читает их и ходит по связям `[[...]]`. Удалять заметки агент не может - только переносить в `archive`. Задача с конкретным временем - событие в календаре, а не заметка.
 
-В патче для OpenRouter включены `require_parameters` (только провайдеры модели, которые поддерживают tools) и `data_collection: "deny"` (календарь не уходит провайдерам, которые сохраняют запросы для обучения).
+Смысловому поиску нужны эмбеддинги: Basic Memory берёт их по OpenAI-совместимому API (`EMBEDDING_*` в `.env`), локальной модели нет. По умолчанию это OpenRouter с многоязычной `baai/bge-m3`; подойдёт и свой сервис с `/v1/embeddings` - адрес, ключ, модель и размерность вектора. После смены модели или размерности пересоберите индекс: `docker compose exec basic-memory basic-memory reindex --embeddings`.
 
-## Инструменты агента (MCP)
+Участников встречи агент связывает с событием через поле `people`: там ссылки (permalink) на карточки людей. Google хранит их в скрытом свойстве события, приглашения никому не уходят.
 
-Эндпоинт `POST /mcp/` (Streamable HTTP, stateless, JSON-ответы), авторизация `Authorization: Bearer <AUTH_TOKEN>`.
+## Напоминания
 
-| Инструмент | Что делает |
+- Сервис читает календарь раз в `CALENDAR_SYNC_INTERVAL` секунд на `CALENDAR_SYNC_DAYS` вперёд и сразу после изменения через агента.
+- Минуты берутся из уведомлений события в Google, иначе - `REMINDER_MINUTES`; важным добавляются `IMPORTANT_REMINDER_MINUTES`.
+- Напоминание, время которого прошло до создания события, пропускается. После простоя приходит одно - ближайшее к началу.
+- Отправленные напоминания отмечаются в `data/assistant`, поэтому после перезапуска не повторяются.
+- События на весь день попадают в утреннюю сводку.
+
+## Инструменты агента
+
+| Сервер | Инструменты |
 |---|---|
-| `list_events` | События периода (по умолчанию сегодня и неделя вперёд), поиск по словам `query`, текущее время `now` |
-| `create_event` | Новое событие: время, длительность, место, `important`, `remind_minutes`, `recurrence` |
-| `update_event` | Меняет только переданные поля; при переносе длительность сохраняется |
-| `delete_event` | Удаляет событие; `recurring_event_id` удаляет всю серию |
+| `personal-assistant` | `list_events`, `create_event`, `update_event`, `delete_event`; у событий есть `people` |
+| `notes` (Basic Memory) | `bm_write`, `bm_edit`, `bm_read`, `bm_search`, `bm_find`, `bm_list`, `bm_context`, `bm_move` |
 
-Ошибки предметной области («Event not found», «Event must end after it starts») доходят до модели текстом: она может исправить вызов.
+Ошибки календаря («Event not found», «Event must end after it starts») доходят до модели текстом, она исправляет вызов.
 
 ## REST API
 
-Те же операции для отладки и других клиентов, Swagger - на `/docs`. Авторизация та же: без токена 401, с неверным 403.
+Те же операции с событиями для отладки, Swagger - `http://127.0.0.1:8090/docs`, авторизация `Authorization: Bearer <AUTH_TOKEN>`.
 
 | Метод | Путь | Описание |
 |---|---|---|
@@ -192,125 +140,62 @@ scripts/openclaw.sh automations add --name "Утренняя сводка" \
 | `PATCH` | `/v1/events/{id}` | Изменить событие |
 | `DELETE` | `/v1/events/{id}` | Удалить событие → 204 |
 
+Время: `2026-11-06T15:00` - локальное в `TIMEZONE`, `2026-11-06` - событие на весь день, у него `end` - последний день включительно. Коды: 400 - неверное время, 401/403 - токен, 404 - нет события, 422 - неверный запрос или Google отклонил событие, 502/503/504 - Google недоступен или не настроен.
+
+## Control UI
+
 ```bash
-curl -s -X POST localhost:8090/v1/events -H "Authorization: Bearer $AUTH_TOKEN" \
-  -H 'Content-Type: application/json' \
-  -d '{"title": "Созвон с Петей", "start": "2026-11-06T15:00", "important": true}'
+ssh -N -L 18789:127.0.0.1:18789 <сервер>        # локальный порт - ровно 18789
+scripts/openclaw.sh dashboard --no-open          # одноразовая ссылка входа
 ```
 
-```json
-{
-  "id": "k1v2...", "title": "Созвон с Петей",
-  "start": "2026-11-06T15:00+03:00", "end": "2026-11-06T16:00+03:00", "all_day": false,
-  "description": "", "location": "", "important": true, "reminders": [1440, 120, 15],
-  "recurring_event_id": null, "link": "https://www.google.com/calendar/event?eid=..."
-}
-```
+Ссылка входит и одобряет браузер как устройство владельца. При входе по `OPENCLAW_GATEWAY_TOKEN` устройство одобряют командами `devices list` и `devices approve <id>`.
 
-Формат времени: `2026-11-06T15:00` - локальное время в `TIMEZONE`, явное смещение (`+03:00`, `Z`) учитывается. `2026-11-06` - событие на весь день. У событий на весь день `end` - последний день включительно.
+## Личность агента
 
-| Код | Когда |
-|---|---|
-| 400 | Неверное время, конец раньше начала, неверные минуты напоминаний |
-| 401 / 403 | Нет токена / неверный токен |
-| 404 | Нет события с таким id |
-| 422 | Неверное тело запроса; Google отклонил событие (например, неверный RRULE) |
-| 502 | Ошибка Google Calendar, нет доступа к календарю, ошибка обновления токена |
-| 503 | Календарь не настроен (`GOOGLE_CREDENTIALS_FILE`) или Google недоступен |
-| 504 | Google не ответил вовремя |
-
-## Как работают напоминания
-
-1. Раз в `CALENDAR_SYNC_INTERVAL` секунд сервис читает из Google события от «сутки назад» до `CALENDAR_SYNC_DAYS` вперёд, повторяющиеся - отдельными вхождениями. После изменения через агента календарь перечитывается сразу. События хранятся в памяти: источник правды - Google.
-2. Каждые 30 секунд сервис ищет события, у которых подошло время напоминания:
-   - уведомления по умолчанию в Google → `REMINDER_MINUTES`;
-   - свои уведомления события в Google (или `remind_minutes` от агента) → они; пустой список - без них;
-   - важное событие → плюс `IMPORTANT_REMINDER_MINUTES`.
-   Пустой список отключает обычные напоминания, но не дополнительные у важного события.
-3. Напоминание, время которого наступило раньше создания события, пропускается: «за сутки» для встречи, поставленной вечером на утро, не придёт.
-4. Если сервис лежал и пропустил несколько напоминаний, придёт одно - ближайшее к началу, и только если событие ещё не началось.
-5. Отправленное напоминание помечается по ключу (событие, время начала, минуты) в SQLite (`DATA_DIR/assistant.db`), поэтому после перезапуска оно не придёт повторно. После переноса события напоминания придут заново. Если Telegram не ответил, напоминание повторится на следующем тике.
-
-У событий на весь день нет часа, от которого считать минуты. Они попадают в утреннюю сводку.
-
-## Конфигурация сервиса
-
-Переменные окружения (`.env`); все необязательны, но без Google и Telegram соответствующие функции выключены.
-
-| Переменная | По умолчанию | Описание |
-|---|---|---|
-| `AUTH_TOKEN` | - | Bearer-токен REST и MCP; без него авторизация выключена |
-| `DATA_DIR` | `/data` | Каталог `assistant.db` с отметками отправленных напоминаний |
-| `TIMEZONE` | `Europe/Moscow` | Часовой пояс владельца |
-| `GOOGLE_CREDENTIALS_FILE` | - | Токен `authorized_user` из `scripts/authorize_google.py` или ключ сервисного аккаунта |
-| `GOOGLE_CALENDAR_ID` | `primary` | Календарь; для сервисного аккаунта - e-mail владельца |
-| `CALENDAR_SYNC_INTERVAL` | `60` | Период чтения календаря, секунды |
-| `CALENDAR_SYNC_DAYS` | `30` | На сколько дней вперёд смотреть; должно покрывать самое раннее напоминание |
-| `IMPORTANT_COLOR_ID` | `11` | Цвет важного события (11 - красный «Томатный») |
-| `TELEGRAM_BOT_TOKEN` | - | Токен бота; без него напоминания только пишутся в лог |
-| `TELEGRAM_CHAT_ID` | - | Ваш user id; задаётся вместе с токеном |
-| `REMINDER_MINUTES` | `15` | Напоминания по умолчанию, минуты через запятую |
-| `IMPORTANT_REMINDER_MINUTES` | `1440,120` | Дополнительные напоминания важных событий |
-| `LOG_LEVEL` / `LOG_DIAGNOSE` | `INFO` / `False` | Логирование |
-
-Переменные OpenClaw (`OPENROUTER_API_KEY`, `OPENCLAW_MODEL`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_IMAGE`, `OPENCLAW_TZ`) описаны в `.env.example`. Если OpenRouter, Google или Telegram недоступны с сервера напрямую, задайте `HTTPS_PROXY` (и `NO_PROXY=personal-assistant,localhost`): его подхватывают оба контейнера.
-
-Неверная конфигурация не роняет сервис трейсбеком: каждая причина пишется в лог строкой `Bad configuration: ...`, после чего процесс завершается. Если в `GOOGLE_CREDENTIALS_FILE` по ошибке указан файл OAuth-клиента, сервис так и скажет.
+Имя, характер и правила - `openclaw/workspace`. Контейнер `data-init` перед стартом копирует их агенту и убирает ритуал первого запуска `BOOTSTRAP.md`. После правок: `docker compose up -d`, затем `set-identity` из раздела «OpenClaw», и `/new` боту.
 
 ## Безопасность
 
-- Бот отвечает только вам: `dmPolicy: "allowlist"` с вашим user id, вы же владелец слэш-команд OpenClaw.
-- У агента нет shell, записи файлов и веба: профиль инструментов `messaging` плюс `read` для навыков. Приглашение в календарь от постороннего может содержать prompt injection, и через него агент максимум изменит ваш календарь. Удаление агент подтверждает у вас (инструкция навыка, у инструмента пометка `destructiveHint`).
-- Google-доступ ограничен событиями (`calendar.events`): ни списка календарей, ни прав доступа.
-- Порты сервиса (8090) и Control UI OpenClaw (18789) опубликованы только на `127.0.0.1`. Control UI открывайте через SSH-туннель (раздел «Control UI»).
-- Агенту не нужны `write` и `exec`, даже когда стандартный ритуал знакомства их просит: личность задаётся файлами из `openclaw/workspace`, имя в конфиг пишет `set-identity`.
-- Токены не пишутся в лог; логгер httpx заглушён, потому что URL Bot API содержит токен бота.
+- Бот отвечает только владельцу: `dmPolicy: "allowlist"` с `TELEGRAM_CHAT_ID`.
+- У агента нет shell и записи файлов; `read` видит только его рабочий каталог. Текст событий, заметок и страниц для агента - данные, а не команды.
+- Basic Memory не умеет авторизацию по HTTP: его порт не публикуется, к нему ходит только OpenClaw по сети compose.
+- Порты сервиса, Control UI и интерфейса Syncthing опубликованы только на `127.0.0.1`; наружу открыт лишь 22000 для синхронизации.
+- Google-доступ ограничен событиями (`calendar.events`).
 
 ## Устройство
 
 ```
 app/
 ├── main.py                 настройки → логирование → FastAPI → /health → REST → /mcp
-├── api_v1/
-│   ├── views.py            REST /v1/events
-│   ├── tools.py            MCP-инструменты агента и McpEndpoint
-│   ├── schemas.py          pydantic-контракт API и инструментов
-│   └── errors.py           AppError → {"detail": ...}
+├── api_v1/                 REST (views.py), MCP-инструменты (tools.py), схемы, обработчики ошибок
 ├── core/
-│   ├── engine.py           AssistantEngine: операции с календарём
-│   ├── scheduler.py        фоновый цикл: чтение календаря и отправка напоминаний
+│   ├── engine.py           сборка: клиенты, хранилище отметок, цикл напоминаний
+│   ├── events.py           операции с событиями
+│   ├── event_times.py      начало и конец события из слов агента
+│   ├── scheduler.py        цикл: чтение календаря и отправка напоминаний
 │   ├── reminders.py        какие напоминания пора отправить и их текст
 │   ├── store.py            SQLite: отметки отправленных напоминаний
-│   ├── clock.py            разбор локального времени агента
 │   ├── upstream/           клиенты Google Calendar и Telegram Bot API
-│   ├── auth/               Bearer для REST (Depends) и для смонтированного MCP (ASGI)
-│   ├── config/             Settings (env) и constants.py (лимиты API, тайминги)
-│   ├── entities.py         Event, Reminder
-│   └── exceptions.py       AppError и наследники
-└── utils/                  lifespan (движок + MCP-сервер), логирование
-openclaw/
-├── openclaw.patch.json5    патч конфига OpenClaw: модель, Telegram, MCP, навык, пояс, политика инструментов
-├── skills/secretary/       навык агента: как работать с календарём
-└── workspace/              личность агента: IDENTITY, SOUL, USER, AGENTS
-scripts/
-├── authorize_google.py     разовый вход в Google
-└── openclaw.sh             команды OpenClaw в контейнере шлюза
-tests/                      pytest: напоминания, клиент Google, движок с фейками, API и MCP
+│   ├── auth/  config/      Bearer-авторизация, настройки и константы
+│   └── entities.py  exceptions.py
+└── utils/                  lifespan, логирование, время
+openclaw/                   патч конфига, навык secretary, личность агента
+scripts/                    authorize_google.py, openclaw.sh
+data/                       assistant, notes, basic-memory, syncthing, openclaw
 ```
-
-Google Calendar вызывается через общий `httpx.AsyncClient`. google-auth только загружает учётные данные и обновляет access-токен в потоке под блокировкой: `google-api-python-client` синхронный и не потокобезопасный. SQLite работает в одном выделенном потоке.
 
 ## Разработка
 
 ```bash
 uv sync
-uv run pytest -q                           # тесты без сети и ключей; локальный .env они не читают
-uv run fastapi dev app/main.py             # http://localhost:8000/docs, настройки из .env
+uv run pytest -q
+uv run fastapi dev app/main.py
 ```
 
 ## Ограничения
 
-- Один календарь (`GOOGLE_CALENDAR_ID`) и один владелец.
-- Заметок и базы знаний нет: это отдельный сервис, если понадобится.
-- Перенос времени через id серии меняет начало серии целиком; одно вхождение переносится по его собственному id.
-- Синтаксис CLI и конфига OpenClaw проверен на версии 2026.10.9. Если команды изменятся, зафиксируйте `OPENCLAW_IMAGE` на этой версии.
+- Один календарь и один владелец.
+- В Whisper уходят только `model`, `language` и файл: нестандартные параметры сервиса задаются его значениями по умолчанию. Whisper во внутренней сети требует `models.providers.openai.request.allowPrivateNetwork: true` в патче.
+- Текст заметок уходит эмбеддеру (OpenRouter или ваш сервис), как и разговоры - модели.
+- Синтаксис OpenClaw проверен на версии 2026.10.9, Basic Memory - на 1.0.0.

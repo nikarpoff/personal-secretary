@@ -1,10 +1,10 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Any, List, Literal, Optional, Self
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from typing import Annotated, Any, List, Literal, Optional
+from zoneinfo import ZoneInfo
 
 from loguru import logger
-from pydantic import Field, ValidationError, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -39,24 +39,6 @@ class Settings(BaseSettings):
             return [int(part) for part in value.replace(" ", "").split(",") if part]
         return value
 
-    @model_validator(mode="after")
-    def _validate_related_settings(self) -> Self:
-        try:
-            ZoneInfo(self.TIMEZONE)
-        except (ZoneInfoNotFoundError, ValueError):
-            raise ValueError(f"TIMEZONE ({self.TIMEZONE}) is not an IANA timezone, e.g. Europe/Moscow") from None
-
-        if (self.TELEGRAM_BOT_TOKEN is None) != (self.TELEGRAM_CHAT_ID is None):
-            raise ValueError("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are set together")
-
-        minutes = self.REMINDER_MINUTES + self.IMPORTANT_REMINDER_MINUTES
-        if any(m < 0 for m in minutes):
-            raise ValueError("REMINDER_MINUTES and IMPORTANT_REMINDER_MINUTES must not be negative")
-        if minutes and max(minutes) >= self.CALENDAR_SYNC_DAYS * 24 * 60:
-            raise ValueError(
-                f"CALENDAR_SYNC_DAYS ({self.CALENDAR_SYNC_DAYS}) must cover the earliest reminder ({max(minutes)} min)"
-            )
-        return self
 
     @property
     def tz(self) -> ZoneInfo:
@@ -69,6 +51,10 @@ class Settings(BaseSettings):
     @property
     def calendar_enabled(self) -> bool:
         return self.GOOGLE_CREDENTIALS_FILE is not None
+
+    @property
+    def telegram_enabled(self) -> bool:
+        return bool(self.TELEGRAM_BOT_TOKEN and self.TELEGRAM_CHAT_ID)
 
     # An empty variable keeps the default
     model_config = SettingsConfigDict(env_file=".env", env_ignore_empty=True, extra="ignore")

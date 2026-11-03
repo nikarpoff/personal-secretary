@@ -16,7 +16,7 @@ from typing import Any, Callable, List, Optional, Sequence, Set, Tuple, TypeVar
 
 from loguru import logger
 
-from app.core.clock import iso_utc
+from app.utils.time import iso_utc
 
 T = TypeVar("T")
 

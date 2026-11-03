@@ -4,16 +4,15 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: personal-assistant
+    env_file: .env
     volumes:
       - ./data/assistant:/data
       - ./secrets:/secrets:ro
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
       - "127.0.0.1:8090:8000"
-    env_file:
-      - .env
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      host.docker.internal: host-gateway
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
@@ -23,32 +22,77 @@ services:
       start_period: 30s
       start_interval: 2s
 
-  # Разовый контейнер перед стартом шлюза:
-  # 1. кладёт личность агента из openclaw/workspace (имя, характер, правила) и убирает ритуал
-  #    первого запуска BOOTSTRAP.md - заполнить его сам агент не может, у него нет записи файлов;
-  # 2. отдаёт data/openclaw пользователю node (uid 1000): отсутствующий каталог Docker создаёт от root
-  openclaw-init:
+  # Разовый контейнер перед стартом остальных:
+  # 1. кладёт личность агента из openclaw/workspace и убирает ритуал первого запуска BOOTSTRAP.md -
+  #    заполнить его сам агент не может, у него нет записи файлов;
+  # 2. отдаёт каталоги OpenClaw, заметок, Basic Memory и Syncthing пользователю uid 1000,
+  #    от которого они работают: отсутствующий каталог Docker создаёт от root
+  data-init:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     user: "0:0"
     entrypoint:
       - sh
       - -ec
       - |
-        mkdir -p /home/node/.openclaw/workspace
-        cp /opt/personal-assistant/workspace/*.md /home/node/.openclaw/workspace/
-        rm -f /home/node/.openclaw/workspace/BOOTSTRAP.md
-        chown -R 1000:1000 /home/node/.openclaw
+        mkdir -p /data/openclaw/workspace /data/notes /data/basic-memory /data/syncthing
+        cp /opt/personal-assistant/workspace/*.md /data/openclaw/workspace/
+        rm -f /data/openclaw/workspace/BOOTSTRAP.md
+        chown -R 1000:1000 /data/openclaw /data/notes /data/basic-memory /data/syncthing
     volumes:
-      - ./data/openclaw:/home/node/.openclaw
+      - ./data:/data
       - ./openclaw/workspace:/opt/personal-assistant/workspace:ro
     restart: "no"
+
+  # Заметки: Markdown-хранилище Obsidian в data/notes, агент работает с ним через MCP Basic Memory.
+  # У HTTP-транспорта нет авторизации: порт не публикуется, доступ только из сети compose
+  basic-memory:
+    image: ${BASIC_MEMORY_IMAGE:-ghcr.io/basicmachines-co/basic-memory:latest}
+    container_name: basic-memory
+    command: ["basic-memory", "mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000", "--project", "main"]
+    # Только нужные ему переменные, а не весь .env: это сторонний контейнер
+    environment:
+      BASIC_MEMORY_HOME: /app/data
+      # Эмбеддинги смыслового поиска - по OpenAI-совместимому API, локальной модели нет
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_PROVIDER: openai
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_API_BASE: ${EMBEDDING_BASE_URL}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_API_KEY: ${EMBEDDING_API_KEY}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      BASIC_MEMORY_SEMANTIC_MIN_SIMILARITY: "0.3"
+      BASIC_MEMORY_NO_PROMOS: "1"
+      BASIC_MEMORY_AUTO_UPDATE: "false"
+    volumes:
+      - ./data/notes:/app/data
+      - ./data/basic-memory:/home/appuser/.basic-memory
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Синхронизация data/notes с Obsidian на ваших устройствах
+  syncthing:
+    image: ${SYNCTHING_IMAGE:-syncthing/syncthing:latest}
+    container_name: syncthing
+    hostname: personal-assistant
+    volumes:
+      - ./data/syncthing:/var/syncthing
+      - ./data/notes:/var/syncthing/notes
+    ports:
+      # Веб-интерфейс - через SSH-туннель
+      - "127.0.0.1:8384:8384"
+      # Прямые соединения с устройствами; без них Syncthing работает через публичные relay
+      - "22000:22000/tcp"
+      - "22000:22000/udp"
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
     container_name: openclaw-gateway
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
-    env_file:
-      - .env
+    env_file: .env
     environment:
       HOME: /home/node
       OPENCLAW_HOME: /home/node
@@ -57,11 +101,10 @@ services:
       OPENCLAW_CONFIG_DIR: /home/node/.openclaw
       OPENCLAW_WORKSPACE_DIR: /home/node/.openclaw/workspace
       OPENCLAW_GATEWAY_PORT: "18789"
-      TZ: ${OPENCLAW_TZ:-UTC}
     volumes:
       - ./data/openclaw:/home/node/.openclaw
-      # Навык секретаря прямо из репозитория: skills.load.extraDirs в патче конфига
-      - ./openclaw/skills:/opt/personal-assistant/skills:ro
+      # Навык из репозитория внутри рабочего каталога: read видит только его (tools.fs.workspaceOnly)
+      - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
@@ -70,15 +113,17 @@ services:
     init: true
     command: ["node", "dist/index.js", "gateway", "--bind", "lan", "--port", "18789"]
     extra_hosts:
-      - "host.docker.internal:host-gateway"
+      host.docker.internal: host-gateway
     ports:
       # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
       - "127.0.0.1:18789:18789"
     depends_on:
-      openclaw-init:
+      data-init:
         condition: service_completed_successfully
       personal-assistant:
         condition: service_healthy
+      basic-memory:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "dist/docker-healthcheck.js"]

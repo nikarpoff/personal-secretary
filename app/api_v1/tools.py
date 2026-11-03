@@ -6,10 +6,10 @@ fields more reliably than nested objects. A public domain error reaches the mode
 its text, so it can correct the call; other failures stay "Error executing tool".
 """
 
-from typing import Annotated, Awaitable, List, Optional, TypeVar
+from typing import Annotated, Any, Dict, Optional
 
 from mcp.server.mcpserver import MCPServer
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 from starlette.responses import JSONResponse
@@ -21,11 +21,12 @@ from app.api_v1.schemas import (
     EventInfo,
     EventListResponse,
     EventUpdateRequest,
+    PEOPLE_HINT,
+    People,
+    ReminderMinutes,
 )
 from app.core.engine import AssistantEngine
 from app.core.exceptions import AppError
-
-T = TypeVar("T")
 
 INSTRUCTIONS = (
     "Personal secretary backend: the owner's Google Calendar. "
@@ -38,18 +39,23 @@ READ_ONLY = ToolAnnotations(readOnlyHint=True)
 DESTRUCTIVE = ToolAnnotations(destructiveHint=True)
 
 
-async def _call(action: Awaitable[T]) -> T:
-    try:
-        return await action
-    except AppError as e:
-        if e.public:
-            raise ToolError(str(e)) from e
-        raise
+class AssistantMCP(MCPServer):
+    """MCP server with one error handler for all the tools, like the REST one"""
+
+    async def call_tool(self, name: str, arguments: Dict[str, Any], context: Any = None) -> Any:
+        try:
+            return await super().call_tool(name, arguments, context)
+        except UnexpectedToolError as e:
+            # The SDK hides a crash behind a generic text; a public domain error is safe to show
+            cause = e.__cause__
+            if isinstance(cause, AppError) and cause.public:
+                raise ToolError(f"Error executing tool {name}: {cause}") from cause
+            raise
 
 
 def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
     """MCP server whose tools call the engine."""
-    server = MCPServer(name="personal-assistant", instructions=INSTRUCTIONS, version=version)
+    server = AssistantMCP(name="personal-assistant", instructions=INSTRUCTIONS, version=version)
 
     @server.tool(annotations=READ_ONLY)
     async def list_events(
@@ -59,7 +65,7 @@ def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
         limit: Annotated[int, Field(ge=1, le=500, description="Maximum events")] = 100,
     ) -> EventListResponse:
         """Events of the calendar in a range, plus the current local time."""
-        return await _call(engine.list_events(start, end, query, limit))
+        return await engine.events.list(start, end, query, limit)
 
     @server.tool()
     async def create_event(
@@ -70,15 +76,17 @@ def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
         description: Annotated[str, Field(description="Details, agenda, links")] = "",
         location: Annotated[str, Field(description="Place or a meeting link")] = "",
         important: Annotated[bool, Field(description="Important: extra early reminders (a day and two hours before by default)")] = False,
-        remind_minutes: Annotated[Optional[List[int]], Field(description="Telegram reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")] = None,
+        remind_minutes: Annotated[Optional[ReminderMinutes], Field(description="Telegram reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")] = None,
         recurrence: Annotated[Optional[str], Field(description="RRULE for a recurring event, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=MO'")] = None,
+        people: Annotated[Optional[People], Field(description=PEOPLE_HINT)] = None,
     ) -> EventInfo:
         """Creates an event in Google Calendar; the owner gets Telegram reminders before it."""
         request = EventCreateRequest(
             title=title, start=start, end=end, duration_minutes=duration_minutes, description=description,
             location=location, important=important, remind_minutes=remind_minutes, recurrence=recurrence,
+            people=people or [],
         )
-        return await _call(engine.create_event(request))
+        return await engine.events.create(request)
 
     @server.tool()
     async def update_event(
@@ -89,21 +97,22 @@ def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
         description: Annotated[Optional[str], Field(description="New details; empty string clears them")] = None,
         location: Annotated[Optional[str], Field(description="New place; empty string clears it")] = None,
         important: Annotated[Optional[bool], Field(description="Mark or unmark as important")] = None,
-        remind_minutes: Annotated[Optional[List[int]], Field(description="New reminders, minutes before the start; [] for none")] = None,
+        remind_minutes: Annotated[Optional[ReminderMinutes], Field(description="New reminders, minutes before the start; [] for none")] = None,
+        people: Annotated[Optional[People], Field(description=f"{PEOPLE_HINT}; they replace the old ones, [] unlinks all")] = None,
     ) -> EventInfo:
         """Changes an event: only the given fields change."""
         request = EventUpdateRequest(
             title=title, start=start, end=end, description=description,
-            location=location, important=important, remind_minutes=remind_minutes,
+            location=location, important=important, remind_minutes=remind_minutes, people=people,
         )
-        return await _call(engine.update_event(event_id, request))
+        return await engine.events.update(event_id, request)
 
     @server.tool(annotations=DESTRUCTIVE)
     async def delete_event(
         event_id: Annotated[str, Field(description="Event id; recurring_event_id deletes the whole series")],
     ) -> str:
         """Deletes an event from Google Calendar. Confirm with the owner first."""
-        await _call(engine.delete_event(event_id))
+        await engine.events.delete(event_id)
         return f"Event {event_id} deleted"
 
     return server
