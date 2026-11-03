@@ -51,14 +51,24 @@
     elevated: { enabled: false },
     deny: ["group:runtime", "write", "edit", "apply_patch", "sessions_spawn", "sessions_send"],
     web: {
+      // Числа здесь, а не в .env: ${VAR} OpenClaw подставляет строкой, а эти поля - числовые
       search: {
         enabled: true,
         // DuckDuckGo - плагин @openclaw/duckduckgo-plugin, ставится перед применением патча
         provider: "duckduckgo",
+        maxResults: 5,
+        timeoutSeconds: 20,
+        cacheTtlMinutes: 15,
       },
       fetch: {
         enabled: true,
         readability: true,
+        maxChars: 6000,
+        maxCharsCap: 8000,
+        maxResponseBytes: 250000,
+        timeoutSeconds: 20,
+        cacheTtlMinutes: 15,
+        maxRedirects: 3,
       },
     },
     media: {
@@ -109,8 +119,7 @@
       notes: {
         url: "http://basic-memory:8000/mcp",
         transport: "streamable-http",
-        // Первый смысловой поиск после установки скачивает модель
-        requestTimeoutMs: 120000,
+        requestTimeoutMs: 30000,
         toolFilter: {
           include: ["bm_write", "bm_edit", "bm_read", "bm_search", "bm_find", "bm_list", "bm_context", "bm_move"],
         },
