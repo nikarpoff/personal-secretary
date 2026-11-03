@@ -1,5 +1,0 @@
-# Caddy obtains and renews a public certificate for the configured hostname.
-# Do not add a path rewrite: DAV Destination headers and hrefs use the original path.
-{$OBSIDIAN_SYNC_DOMAIN} {
-    reverse_proxy obsidian-webdav:8080
-}

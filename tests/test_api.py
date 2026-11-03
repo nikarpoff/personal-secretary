@@ -14,8 +14,9 @@ def client(tmp_path_factory):
     with pytest.MonkeyPatch.context() as monkeypatch:
         # Away from the project root: its .env must not leak into the tests
         monkeypatch.chdir(tmp_path_factory.mktemp("cwd"))
+        monkeypatch.setenv("DATA_DIR", str(tmp_path_factory.mktemp("data")))
         monkeypatch.setenv("AUTH_TOKEN", TOKEN)
-        for name in ("GOOGLE_CREDENTIALS_FILE", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "NOTES_ROOT", "ASSISTANT_STATE_DIR"):
+        for name in ("GOOGLE_CREDENTIALS_FILE", "TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID"):
             monkeypatch.setenv(name, "")
 
         from app.core.config import get_settings
@@ -49,11 +50,7 @@ def test_calendar_off_is_reported(client):
 
 def test_mcp_tools_reach_the_engine(client):
     tools = {tool["name"]: tool for tool in _mcp(client, "tools/list")["tools"]}
-    assert set(tools) == {
-        "list_events", "create_event", "update_event", "delete_event",
-        "get_note_context", "search_notes", "read_note", "create_note",
-        "append_note", "update_note", "archive_note", "notes_status",
-    }
+    assert set(tools) == {"list_events", "create_event", "update_event", "delete_event"}
     assert tools["delete_event"]["annotations"]["destructiveHint"] is True
     assert tools["list_events"]["annotations"]["readOnlyHint"] is True
 
@@ -63,3 +60,8 @@ def test_mcp_tools_reach_the_engine(client):
 
     invalid = _mcp(client, "tools/call", {"name": "create_event", "arguments": {"title": "", "start": "2030-01-01T10:00"}})
     assert invalid["isError"] and "title" in json.dumps(invalid)
+
+
+def test_reminder_minutes_are_checked_by_the_contract(client):
+    response = client.post("/v1/events", json={"title": "x", "start": "2030-01-01T10:00", "remind_minutes": [-5]}, headers=AUTH)
+    assert response.status_code == 422

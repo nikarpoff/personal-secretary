@@ -51,7 +51,7 @@ async def list_events(
     engine: AssistantEngine = Depends(get_engine),
 ) -> EventListResponse:
     """Events of a range"""
-    return await engine.list_events(start, end, q, limit)
+    return await engine.events.list(start, end, q, limit)
 
 
 @router.post("/events", status_code=status.HTTP_201_CREATED,
@@ -65,7 +65,7 @@ async def create_event(
     engine: AssistantEngine = Depends(get_engine),
 ) -> EventInfo:
     """Creating a calendar event"""
-    return await engine.create_event(body)
+    return await engine.events.create(body)
 
 
 @router.patch("/events/{event_id}",
@@ -81,7 +81,7 @@ async def update_event(
     engine: AssistantEngine = Depends(get_engine),
 ) -> EventInfo:
     """Changing a calendar event"""
-    return await engine.update_event(event_id, body)
+    return await engine.events.update(event_id, body)
 
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT,
@@ -95,5 +95,5 @@ async def delete_event(
     engine: AssistantEngine = Depends(get_engine),
 ) -> Response:
     """Deleting an event; the series id deletes the whole series"""
-    await engine.delete_event(event_id)
+    await engine.events.delete(event_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

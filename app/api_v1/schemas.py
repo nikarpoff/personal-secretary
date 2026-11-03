@@ -7,8 +7,14 @@ from pydantic import BaseModel, Field
 from app.core.entities import Event
 from app.utils.time import local_day, local_iso
 
+# Google keeps reminders up to four weeks before the start
+ReminderMinutes = List[Annotated[int, Field(ge=0, le=4 * 7 * 24 * 60)]]
+
+# Google keeps a private event property up to 1024 characters
+People = Annotated[List[Annotated[str, Field(min_length=1, max_length=90)]], Field(max_length=10)]
+PEOPLE_HINT = "Permalinks of person notes from the notes tools, e.g. 'main/people/piotr-ivanov'; no invitations are sent"
+
 TIME_HINT = "local time 'YYYY-MM-DDTHH:MM' or a date 'YYYY-MM-DD' for an all-day event; an explicit offset is honored"
-PersonId = Annotated[str, Field(pattern=r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")]
 
 
 # ---- requests --------------------------------------------------------------
@@ -22,9 +28,9 @@ class EventCreateRequest(BaseModel):
     description: str = Field("", description="Details, agenda, links")
     location: str = Field("", description="Place or a meeting link")
     important: bool = Field(False, description="Important events get extra early reminders and the red color in Google Calendar")
-    remind_minutes: Optional[List[int]] = Field(None, description="Reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")
+    remind_minutes: Optional[ReminderMinutes] = Field(None, description="Reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")
     recurrence: Optional[str] = Field(None, description="RRULE of a recurring event, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=MO'")
-    person_ids: Optional[List[PersonId]] = Field(None, max_length=10, description="Selected Obsidian person-card UUIDs; does not invite attendees")
+    people: People = Field([], description=PEOPLE_HINT)
 
 
 class EventUpdateRequest(BaseModel):
@@ -35,8 +41,8 @@ class EventUpdateRequest(BaseModel):
     description: Optional[str] = Field(None, description="New details; empty string clears them")
     location: Optional[str] = Field(None, description="New place; empty string clears it")
     important: Optional[bool] = Field(None, description="Mark or unmark the event as important")
-    remind_minutes: Optional[List[int]] = Field(None, description="New reminders N minutes before the start; [] for none")
-    person_ids: Optional[List[PersonId]] = Field(None, max_length=10, description="Replace person-card references; [] clears them; omitted keeps existing references")
+    remind_minutes: Optional[ReminderMinutes] = Field(None, description="New reminders N minutes before the start; [] for none")
+    people: Optional[People] = Field(None, description=f"{PEOPLE_HINT}; they replace the old ones, [] unlinks all")
 
 
 # ---- responses -------------------------------------------------------------
@@ -54,7 +60,7 @@ class EventInfo(BaseModel):
     reminders: List[int] = Field([], description="Telegram reminders, minutes before the start")
     recurring_event_id: Optional[str] = Field(None, description="Id of the whole series for an occurrence of a recurring event")
     link: Optional[str] = Field(None, description="Event page in Google Calendar")
-    person_ids: List[str] = Field(default_factory=list, max_length=10, description="Person-card UUIDs; read only selected cards for meeting context")
+    people: List[str] = Field([], description="Permalinks of the person notes linked to the event")
 
     @classmethod
     def from_event(cls, event: Event, tz: ZoneInfo, reminders: Sequence[int]) -> "EventInfo":
@@ -75,7 +81,7 @@ class EventInfo(BaseModel):
             reminders=[] if event.all_day else list(reminders),
             recurring_event_id=event.recurring_event_id,
             link=event.html_link,
-            person_ids=list(event.person_ids),
+            people=list(event.people),
         )
 
 

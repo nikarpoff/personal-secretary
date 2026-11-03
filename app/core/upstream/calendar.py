@@ -9,7 +9,7 @@ refreshes the access token: the refresh is blocking, so it runs in a thread unde
 import asyncio
 import json
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
@@ -26,7 +26,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.utils.time import from_iso, iso_utc, local_midnight
 from app.core.config import CALENDAR_SETTINGS as CFG
 from app.core.entities import Event
-from app.core.people import event_person_ids
 from app.core.exceptions import (
     NotFoundError,
     UpstreamError,
@@ -36,6 +35,7 @@ from app.core.exceptions import (
 )
 
 SERVICE = "google-calendar"
+PEOPLE_KEY = "people"           # private extended property: JSON list of person note permalinks
 
 
 class GoogleTime(BaseModel):
@@ -55,6 +55,10 @@ class GoogleReminders(BaseModel):
     overrides: List[GoogleReminderOverride] = []
 
 
+class GoogleExtendedProperties(BaseModel):
+    private: Dict[str, str] = {}
+
+
 class GoogleEvent(BaseModel):
     """The fields of a Google event the assistant reads"""
     model_config = ConfigDict(extra="ignore")
@@ -71,10 +75,11 @@ class GoogleEvent(BaseModel):
     recurringEventId: Optional[str] = None
     htmlLink: Optional[str] = None
     created: Optional[str] = None
+    extendedProperties: GoogleExtendedProperties = Field(default_factory=GoogleExtendedProperties)
 
 
 def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Optional[Event]:
-    """Calendar entity of a Google event; None for a cancelled one."""
+    """Domain entity of a Google event; None for a cancelled one."""
     google = GoogleEvent.model_validate(item)
     if google.status == "cancelled":
         return None
@@ -106,7 +111,7 @@ def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Option
         recurring_event_id=google.recurringEventId,
         html_link=google.htmlLink,
         created=from_iso(google.created),
-        person_ids=event_person_ids(item.get("extendedProperties")),
+        people=tuple(json.loads(google.extendedProperties.private.get(PEOPLE_KEY, "[]"))),
     )
 
 
@@ -115,6 +120,15 @@ def time_body(moment: Any, tz: ZoneInfo) -> Dict[str, str]:
     if isinstance(moment, datetime):
         return {"dateTime": moment.astimezone(tz).isoformat(), "timeZone": tz.key}
     return {"date": moment.isoformat()}
+
+
+def set_people(body: Dict[str, Any], people: List[str]) -> None:
+    """Links of the event to person notes; Google keeps them private, attendees are not invited."""
+    private = body.setdefault("extendedProperties", {}).setdefault("private", {})
+    if people:
+        private[PEOPLE_KEY] = json.dumps(list(dict.fromkeys(people)), ensure_ascii=False)
+    else:
+        private.pop(PEOPLE_KEY, None)
 
 
 def reminders_body(minutes: Optional[List[int]]) -> Dict[str, Any]:
@@ -242,7 +256,3 @@ class GoogleCalendarClient:
         except (ValueError, KeyError, TypeError):
             return response.text[:200] or f"HTTP {response.status_code}"
 
-
-def all_day_end(start: date, last_day: Optional[date]) -> date:
-    """Google keeps the end of an all-day event exclusive, the agent names the last day."""
-    return (last_day or start) + timedelta(days=1)

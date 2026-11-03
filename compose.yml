@@ -6,18 +6,14 @@ services:
     container_name: personal-assistant
     env_file: .env
     volumes:
+      - ./data/assistant:/data
       - ./secrets:/secrets:ro
-      # Secretary is the assistant's scope; Personal stays outside the backend.
-      - ./data/obsidian/Secretary:/notes
-      - ./data/assistant-state:/assistant-state
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
       - "127.0.0.1:8090:8000"
     extra_hosts:
       host.docker.internal: host-gateway
     restart: unless-stopped
-    # Let an in-flight task delivery finish and persist its acknowledgement.
-    stop_grace_period: 30s
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -26,25 +22,71 @@ services:
       start_period: 30s
       start_interval: 2s
 
-  # Разовый контейнер перед стартом шлюза:
-  # 1. кладёт личность агента из openclaw/workspace (имя, характер, правила) и убирает ритуал
-  #    первого запуска BOOTSTRAP.md - заполнить его сам агент не может, у него нет записи файлов;
-  # 2. отдаёт data/openclaw пользователю node (uid 1000): отсутствующий каталог Docker создаёт от root
-  openclaw-init:
+  # Разовый контейнер перед стартом остальных:
+  # 1. кладёт личность агента из openclaw/workspace и убирает ритуал первого запуска BOOTSTRAP.md -
+  #    заполнить его сам агент не может, у него нет записи файлов;
+  # 2. отдаёт каталоги OpenClaw, заметок, Basic Memory и Syncthing пользователю uid 1000,
+  #    от которого они работают: отсутствующий каталог Docker создаёт от root
+  data-init:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     user: "0:0"
     entrypoint:
       - sh
       - -ec
       - |
-        mkdir -p /home/node/.openclaw/workspace
-        cp /opt/personal-assistant/workspace/*.md /home/node/.openclaw/workspace/
-        rm -f /home/node/.openclaw/workspace/BOOTSTRAP.md
-        chown -R 1000:1000 /home/node/.openclaw
+        mkdir -p /data/openclaw/workspace /data/notes /data/basic-memory /data/syncthing
+        cp /opt/personal-assistant/workspace/*.md /data/openclaw/workspace/
+        rm -f /data/openclaw/workspace/BOOTSTRAP.md
+        chown -R 1000:1000 /data/openclaw /data/notes /data/basic-memory /data/syncthing
     volumes:
-      - ./data/openclaw:/home/node/.openclaw
+      - ./data:/data
       - ./openclaw/workspace:/opt/personal-assistant/workspace:ro
     restart: "no"
+
+  # Заметки: Markdown-хранилище Obsidian в data/notes, агент работает с ним через MCP Basic Memory.
+  # У HTTP-транспорта нет авторизации: порт не публикуется, доступ только из сети compose
+  basic-memory:
+    image: ${BASIC_MEMORY_IMAGE:-ghcr.io/basicmachines-co/basic-memory:latest}
+    container_name: basic-memory
+    command: ["basic-memory", "mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000", "--project", "main"]
+    # Только нужные ему переменные, а не весь .env: это сторонний контейнер
+    environment:
+      BASIC_MEMORY_HOME: /app/data
+      # Эмбеддинги смыслового поиска - по OpenAI-совместимому API, локальной модели нет
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_PROVIDER: openai
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_API_BASE: ${EMBEDDING_BASE_URL}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_API_KEY: ${EMBEDDING_API_KEY}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      BASIC_MEMORY_SEMANTIC_EMBEDDING_DIMENSIONS: ${EMBEDDING_DIMENSIONS}
+      BASIC_MEMORY_SEMANTIC_MIN_SIMILARITY: "0.3"
+      BASIC_MEMORY_NO_PROMOS: "1"
+      BASIC_MEMORY_AUTO_UPDATE: "false"
+    volumes:
+      - ./data/notes:/app/data
+      - ./data/basic-memory:/home/appuser/.basic-memory
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  # Синхронизация data/notes с Obsidian на ваших устройствах
+  syncthing:
+    image: ${SYNCTHING_IMAGE:-syncthing/syncthing:latest}
+    container_name: syncthing
+    hostname: personal-assistant
+    volumes:
+      - ./data/syncthing:/var/syncthing
+      - ./data/notes:/var/syncthing/notes
+    ports:
+      # Веб-интерфейс - через SSH-туннель
+      - "127.0.0.1:8384:8384"
+      # Прямые соединения с устройствами; без них Syncthing работает через публичные relay
+      - "22000:22000/tcp"
+      - "22000:22000/udp"
+    depends_on:
+      data-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
 
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
@@ -61,9 +103,7 @@ services:
       OPENCLAW_GATEWAY_PORT: "18789"
     volumes:
       - ./data/openclaw:/home/node/.openclaw
-      - ./openclaw/whisper/transcribe.mjs:/opt/secretary/transcribe-whisper.mjs:ro
-      - ./scripts/render_openclaw_config.mjs:/opt/personal-assistant/render-config.mjs:ro
-      # Native workspace skill loading keeps read access within tools.fs.workspaceOnly.
+      # Навык из репозитория внутри рабочего каталога: read видит только его (tools.fs.workspaceOnly)
       - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:
       - NET_RAW
@@ -78,10 +118,12 @@ services:
       # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
       - "127.0.0.1:18789:18789"
     depends_on:
-      openclaw-init:
+      data-init:
         condition: service_completed_successfully
       personal-assistant:
         condition: service_healthy
+      basic-memory:
+        condition: service_started
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "node", "dist/docker-healthcheck.js"]
@@ -89,52 +131,3 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-
-  # Optional HTTPS WebDAV endpoint for Obsidian Remotely Save.
-  # Configure the domain and secrets/webdav.env as described in docs/obsidian.md.
-  obsidian-webdav:
-    profiles: [obsidian-sync]
-    build:
-      context: ./deploy/webdav
-    env_file:
-      - path: ./secrets/webdav.env
-        required: false
-    environment:
-      OBSIDIAN_VAULT_NAME: ${OBSIDIAN_VAULT_NAME:-Obsidian}
-    volumes:
-      - ./data/obsidian:/var/lib/dav
-    expose:
-      - "8080"
-    networks: [obsidian-sync]
-    read_only: true
-    tmpfs:
-      - /tmp:size=16m,mode=1777
-    cap_drop: [ALL]
-    # Host vault directories may belong to the deploy user.
-    cap_add: [DAC_OVERRIDE]
-    security_opt:
-      - no-new-privileges:true
-    restart: unless-stopped
-
-  obsidian-https:
-    profiles: [obsidian-sync]
-    image: caddy:2.10.2-alpine
-    environment:
-      # Must be a public hostname with DNS pointing at this VPS. Empty means fail closed.
-      OBSIDIAN_SYNC_DOMAIN: ${OBSIDIAN_SYNC_DOMAIN:-}
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/webdav/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./data/webdav/caddy-data:/data
-      - ./data/webdav/caddy-config:/config
-    networks: [obsidian-sync]
-    depends_on:
-      - obsidian-webdav
-    restart: unless-stopped
-
-networks:
-  obsidian-sync:
-    # WebDAV is reachable only by its TLS proxy; backend/OpenClaw use a different network.
-    driver: bridge
