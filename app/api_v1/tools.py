@@ -21,6 +21,8 @@ from app.api_v1.schemas import (
     EventInfo,
     EventListResponse,
     EventUpdateRequest,
+    PEOPLE_HINT,
+    People,
     ReminderMinutes,
 )
 from app.core.engine import AssistantEngine
@@ -76,11 +78,13 @@ def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
         important: Annotated[bool, Field(description="Important: extra early reminders (a day and two hours before by default)")] = False,
         remind_minutes: Annotated[Optional[ReminderMinutes], Field(description="Telegram reminders N minutes before the start, e.g. [60, 10]; [] for none; the defaults when omitted")] = None,
         recurrence: Annotated[Optional[str], Field(description="RRULE for a recurring event, e.g. 'RRULE:FREQ=WEEKLY;BYDAY=MO'")] = None,
+        people: Annotated[Optional[People], Field(description=PEOPLE_HINT)] = None,
     ) -> EventInfo:
         """Creates an event in Google Calendar; the owner gets Telegram reminders before it."""
         request = EventCreateRequest(
             title=title, start=start, end=end, duration_minutes=duration_minutes, description=description,
             location=location, important=important, remind_minutes=remind_minutes, recurrence=recurrence,
+            people=people or [],
         )
         return await engine.events.create(request)
 
@@ -94,11 +98,12 @@ def build_mcp_server(engine: AssistantEngine, version: str) -> MCPServer:
         location: Annotated[Optional[str], Field(description="New place; empty string clears it")] = None,
         important: Annotated[Optional[bool], Field(description="Mark or unmark as important")] = None,
         remind_minutes: Annotated[Optional[ReminderMinutes], Field(description="New reminders, minutes before the start; [] for none")] = None,
+        people: Annotated[Optional[People], Field(description=f"{PEOPLE_HINT}; they replace the old ones, [] unlinks all")] = None,
     ) -> EventInfo:
         """Changes an event: only the given fields change."""
         request = EventUpdateRequest(
             title=title, start=start, end=end, description=description,
-            location=location, important=important, remind_minutes=remind_minutes,
+            location=location, important=important, remind_minutes=remind_minutes, people=people,
         )
         return await engine.events.update(event_id, request)
 

@@ -10,7 +10,7 @@ from app.core.exceptions import CalendarNotConfiguredError, NotFoundError
 from app.core.reminders import reminder_offsets
 from app.core.scheduler import ReminderScheduler
 from app.core.upstream import GoogleCalendarClient
-from app.core.upstream.calendar import reminders_body, time_body, to_event
+from app.core.upstream.calendar import reminders_body, set_people, time_body, to_event
 from app.utils.time import local_iso, utc_now
 
 
@@ -51,6 +51,8 @@ class EventService:
             rule = request.recurrence.strip()
             body["recurrence"] = [rule if rule.upper().startswith("RRULE:") else f"RRULE:{rule}"]
         self._set_alerts(body, request.important, request.remind_minutes)
+        if request.people:
+            set_people(body, request.people)
 
         event = self._changed(await calendar.insert_event(body))
         logger.info("Event created: '{}' at {}", event.id, event.start)
@@ -74,6 +76,8 @@ class EventService:
             start, end = changed_span(current, request.start, request.end, self._tz)
             body["start"], body["end"] = time_body(start, self._tz), time_body(end, self._tz)
         self._set_alerts(body, request.important, request.remind_minutes)
+        if request.people is not None:
+            set_people(body, request.people)
 
         event = self._changed(await calendar.update_event(event_id, body))
         logger.info("Event updated: '{}'", event.id)

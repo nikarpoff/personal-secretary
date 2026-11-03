@@ -138,3 +138,20 @@ def test_deleted_event_gets_no_reminder(settings, monkeypatch):
         assert telegram.messages == []
 
     _run(settings, monkeypatch, scenario)
+
+
+def test_event_people_are_kept_private_and_replaced(settings, monkeypatch):
+    async def scenario(engine: AssistantEngine, calendar: FakeCalendar, telegram: FakeTelegram):
+        event = await engine.events.create(
+            EventCreateRequest(title="Созвон", start="2030-03-01T10:00", people=["main/people/piotr", "main/people/piotr"])
+        )
+        assert event.people == ["main/people/piotr"]
+        assert "attendees" not in calendar.items[event.id]
+
+        renamed = await engine.events.update(event.id, EventUpdateRequest(title="Созвон с Петей"))
+        assert renamed.people == ["main/people/piotr"]
+
+        cleared = await engine.events.update(event.id, EventUpdateRequest(people=[]))
+        assert cleared.people == []
+
+    _run(settings, monkeypatch, scenario)

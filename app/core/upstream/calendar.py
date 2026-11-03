@@ -35,6 +35,7 @@ from app.core.exceptions import (
 )
 
 SERVICE = "google-calendar"
+PEOPLE_KEY = "people"           # private extended property: JSON list of person note permalinks
 
 
 class GoogleTime(BaseModel):
@@ -54,6 +55,10 @@ class GoogleReminders(BaseModel):
     overrides: List[GoogleReminderOverride] = []
 
 
+class GoogleExtendedProperties(BaseModel):
+    private: Dict[str, str] = {}
+
+
 class GoogleEvent(BaseModel):
     """The fields of a Google event the assistant reads"""
     model_config = ConfigDict(extra="ignore")
@@ -70,6 +75,7 @@ class GoogleEvent(BaseModel):
     recurringEventId: Optional[str] = None
     htmlLink: Optional[str] = None
     created: Optional[str] = None
+    extendedProperties: GoogleExtendedProperties = Field(default_factory=GoogleExtendedProperties)
 
 
 def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Optional[Event]:
@@ -105,6 +111,7 @@ def to_event(item: Dict[str, Any], tz: ZoneInfo, important_color: str) -> Option
         recurring_event_id=google.recurringEventId,
         html_link=google.htmlLink,
         created=from_iso(google.created),
+        people=tuple(json.loads(google.extendedProperties.private.get(PEOPLE_KEY, "[]"))),
     )
 
 
@@ -113,6 +120,15 @@ def time_body(moment: Any, tz: ZoneInfo) -> Dict[str, str]:
     if isinstance(moment, datetime):
         return {"dateTime": moment.astimezone(tz).isoformat(), "timeZone": tz.key}
     return {"date": moment.isoformat()}
+
+
+def set_people(body: Dict[str, Any], people: List[str]) -> None:
+    """Links of the event to person notes; Google keeps them private, attendees are not invited."""
+    private = body.setdefault("extendedProperties", {}).setdefault("private", {})
+    if people:
+        private[PEOPLE_KEY] = json.dumps(list(dict.fromkeys(people)), ensure_ascii=False)
+    else:
+        private.pop(PEOPLE_KEY, None)
 
 
 def reminders_body(minutes: Optional[List[int]]) -> Dict[str, Any]:
