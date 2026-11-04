@@ -56,6 +56,9 @@ deliver() {
     exit 1
   fi
   load_env
+  if [ ! -f secrets/google.json ]; then
+    echo "::warning::Нет secrets/google.json: календарь не заработает, задайте секрет GOOGLE_CREDENTIALS"
+  fi
 
   if [ -n "${REGISTRY_USER:-}" ]; then
     docker login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null

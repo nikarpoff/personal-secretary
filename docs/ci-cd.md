@@ -69,6 +69,7 @@ Required reviewers и ограничить окружение тегами.
 | `SSH_PRIVATE_KEY` | Ключ деплоя, публичная часть лежит в `authorized_keys` пользователя |
 | `SSH_KNOWN_HOSTS` | Вывод `ssh-keyscan -p <порт> <хост>`; без него ключ сервера не проверяется |
 | `DOTENV` | Необязательно: весь `.env` приложения. Без него на сервере остаётся свой `.env` |
+| `GOOGLE_CREDENTIALS` | Необязательно: содержимое `secrets/google.json`. Без него на сервере остаётся свой файл |
 
 Если на сервере уже работает стек, запущенный вручную, задайте другие `COMPOSE_PROJECT_NAME`,
 имена контейнеров и порты или сначала остановите его. Два шлюза с одним токеном Telegram
@@ -76,8 +77,8 @@ Required reviewers и ограничить окружение тегами.
 
 ## Первый деплой
 
-1. Подготовьте сервер: Docker Compose 2.24+, пользователь деплоя в группе `docker`,
-   `secrets/google.json` в `DEPLOY_PATH` (см. README).
+1. Подготовьте сервер: Docker Compose 2.24+, пользователь деплоя в группе `docker`. Токен Google
+   получите по README и положите в секрет `GOOGLE_CREDENTIALS` или вручную в `DEPLOY_PATH/secrets/google.json`.
 2. Запушьте `dev`, дождитесь сборки и поставьте релизный тег. Delivery остановится, если на сервере нет `.env` и не задан `DOTENV`.
 3. Deploy поднимет backend и предупредит, что OpenClaw не настроен. Выполните на сервере
    onboard и установку плагина из README (`scripts/openclaw.sh ...` в `DEPLOY_PATH`), затем

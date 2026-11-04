@@ -25,6 +25,7 @@
 # секреты:
 #   SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS                         - доступ к серверу
 #   DOTENV                                                   - необязательно: целиком .env приложения
+#   GOOGLE_CREDENTIALS                                       - необязательно: secrets/google.json (токен Google)
 
 name: ci-cd
 
@@ -217,6 +218,23 @@ jobs:
             exit 0
           fi
           printf '%s\n' "$DOTENV" | ssh deploy "umask 077 && cat > '$DEPLOY_PATH/.env'"
+
+      # Токен из scripts/authorize_google.py или ключ сервисного аккаунта; в контейнере - /secrets/google.json
+      - name: Доступ к Google (secrets/google.json)
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GOOGLE_CREDENTIALS" ]; then
+            echo "Секрет GOOGLE_CREDENTIALS не задан: на сервере остаётся свой secrets/google.json"
+            exit 0
+          fi
+          if ! printf '%s' "$GOOGLE_CREDENTIALS" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "::error::GOOGLE_CREDENTIALS - не JSON-объект: вставьте содержимое google.json целиком"
+            exit 1
+          fi
+          printf '%s\n' "$GOOGLE_CREDENTIALS" \
+            | ssh deploy "umask 077 && mkdir -p '$DEPLOY_PATH/secrets' && cat > '$DEPLOY_PATH/secrets/google.json'"
 
       - name: deploy.env и образы
         env:
