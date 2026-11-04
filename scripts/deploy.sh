@@ -6,8 +6,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-# Образы, которые собирает CI; OpenClaw и Caddy остаются на версиях из .env и compose.yml
-IMAGE_KEYS="PERSONAL_ASSISTANT_IMAGE OBSIDIAN_WEBDAV_IMAGE"
+# Образ, который собирает CI; OpenClaw, Basic Memory и Syncthing остаются на версиях из .env
+IMAGE_KEYS="PERSONAL_ASSISTANT_IMAGE"
 HEALTH_ATTEMPTS=60
 HEALTH_DELAY=3
 
@@ -57,27 +57,20 @@ deliver() {
   fi
   load_env
 
-  services=personal-assistant
-  case ",${COMPOSE_PROFILES:-}," in
-    *,obsidian-sync,*) services="$services obsidian-webdav" ;;
-  esac
-
   if [ -n "${REGISTRY_USER:-}" ]; then
     docker login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
     trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
   fi
-  # Только свои образы: pull всего проекта молча обновил бы OpenClaw с тегом latest
-  # shellcheck disable=SC2086
-  docker compose pull $services
+  # Только свой образ: pull всего проекта молча обновил бы OpenClaw и остальных с тегом latest
+  docker compose pull personal-assistant
 }
 
 up() {
   load_env
-  # Каталоги томов заранее: отсутствующий Docker создаёт от root
-  mkdir -p secrets data/assistant-state data/obsidian/Secretary data/obsidian/Personal
-  chmod 700 data/assistant-state
+  # Остальные каталоги data/ создаёт и отдаёт uid 1000 контейнер data-init
+  mkdir -p secrets data/assistant
 
-  # Пересоздаём всё: файлы, смонтированные по одному, после обновления указывают на старые копии
+  # Пересоздаём всё: data-init заново кладёт личность агента из openclaw/workspace
   docker compose up -d --no-build --force-recreate
   wait_healthy "${PERSONAL_ASSISTANT_CONTAINER:-personal-assistant}"
 

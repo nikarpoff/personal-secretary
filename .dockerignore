@@ -25,7 +25,6 @@ service-account*.json
 tests/
 scripts/
 openclaw/
-deploy/
 docs/
 .github/
 deploy.env*

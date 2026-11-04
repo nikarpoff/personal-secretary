@@ -16,7 +16,7 @@ class InvalidRequestError(AppError):
     public = True
 
 class NotFoundError(AppError):
-    """No note or event with this id."""
+    """No event with this id."""
     status_code = 404
     public = True
 

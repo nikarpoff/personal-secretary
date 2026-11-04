@@ -14,13 +14,13 @@ GitHub Actions (`.github/workflows/ci-cd.yml`) проверяет и собир�
 
 1. **test** запускает `uv run pytest` на раннере GitHub. Сборка начинается, только если тесты прошли,
    поэтому тег `dev` всегда указывает на проверенный билд.
-2. **build** собирает `personal-assistant` и `obsidian-webdav` и публикует их в GHCR:
-   `ghcr.io/nikarpoff/personal-secretary/<образ>`.
+2. **build** собирает образ `personal-assistant` и публикует его в GHCR:
+   `ghcr.io/nikarpoff/personal-secretary/personal-assistant`.
 3. **delivery** на релизном теге ничего не собирает. Он вешает версию на текущий образ `dev`
    и предупреждает, если тот собран не из коммита тега. Затем копирует в `DEPLOY_PATH`
-   `compose.yml`, `scripts/`, `openclaw/`, `deploy/` и `.env.example`, пишет `deploy.env`
+   `compose.yml`, `scripts/`, `openclaw/` и `.env.example`, пишет `deploy.env`
    (образы, имена контейнеров, порты, проект compose), входит в GHCR токеном запуска и скачивает
-   только свои образы. OpenClaw и Caddy остаются на версиях из `.env` и `compose.yml`.
+   только свой образ. OpenClaw, Basic Memory и Syncthing остаются на версиях из `.env`.
 4. **deploy** выполняет `docker compose up -d --force-recreate` и ждёт `healthy` у backend.
    Если OpenClaw уже настроен (`data/openclaw/openclaw.json`), deploy применяет
    `openclaw/openclaw.patch.json5` и ждёт шлюз.
@@ -52,14 +52,15 @@ Required reviewers и ограничить окружение тегами.
 | `DEPLOY_USER` | Пользователь в группе `docker` | обязательна |
 | `DEPLOY_PATH` | Каталог деплоя: абсолютный или от домашнего каталога | обязательна |
 | `COMPOSE_PROJECT_NAME` | Проект compose | имя каталога |
-| `COMPOSE_PROFILES` | Профили, например `obsidian-sync` | пусто |
 | `PERSONAL_ASSISTANT_CONTAINER` | Контейнер backend | `personal-assistant` |
-| `OPENCLAW_INIT_CONTAINER` | Разовый контейнер подготовки OpenClaw | `openclaw-init` |
+| `DATA_INIT_CONTAINER` | Разовый контейнер подготовки `data/` | `data-init` |
+| `BASIC_MEMORY_CONTAINER` | MCP заметок | `basic-memory` |
+| `SYNCTHING_CONTAINER` | Синхронизация заметок | `syncthing` |
 | `OPENCLAW_GATEWAY_CONTAINER` | Шлюз OpenClaw | `openclaw-gateway` |
-| `OBSIDIAN_WEBDAV_CONTAINER` | WebDAV | `obsidian-webdav` |
-| `OBSIDIAN_HTTPS_CONTAINER` | Caddy перед WebDAV | `obsidian-https` |
 | `PERSONAL_ASSISTANT_PORT` | Порт backend на `127.0.0.1` | `8090` |
 | `OPENCLAW_UI_PORT` | Порт Control UI на `127.0.0.1` | `18789` |
+| `SYNCTHING_UI_PORT` | Порт интерфейса Syncthing на `127.0.0.1` | `8384` |
+| `SYNCTHING_SYNC_PORT` | Публичный порт синхронизации Syncthing | `22000` |
 
 Секреты окружения (Secrets):
 

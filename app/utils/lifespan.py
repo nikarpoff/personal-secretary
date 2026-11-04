@@ -15,17 +15,18 @@ async def lifespan(app: FastAPI):
     engine = AssistantEngine(get_settings())
     await engine.startup()
 
+    # The MCP tools need the engine, so their app is built here and served by McpEndpoint
+    mcp_server = build_mcp_server(engine, app.version)
+    app.state.mcp_app = mcp_server.streamable_http_app(
+        streamable_http_path="/",
+        stateless_http=True,
+        json_response=True,
+        # OpenClaw calls by the compose service name; the bearer token guards the endpoint instead
+        transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
+    )
+    app.state.engine = engine
+
     try:
-        # The MCP tools need the engine; ensure even MCP initialization failures close it.
-        mcp_server = build_mcp_server(engine, app.version)
-        app.state.mcp_app = mcp_server.streamable_http_app(
-            streamable_http_path="/",
-            stateless_http=True,
-            json_response=True,
-            # OpenClaw calls by the compose service name; bearer auth guards the endpoint.
-            transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
-        )
-        app.state.engine = engine
         async with mcp_server.session_manager.run():
             yield
     finally:

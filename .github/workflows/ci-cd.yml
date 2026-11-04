@@ -2,7 +2,8 @@
 # CI/CD: test → build на dev, delivery → deploy → release на релизном теге
 # =====================================================================
 #
-# Образы: GHCR, ghcr.io/<владелец>/<репозиторий>/{personal-assistant,obsidian-webdav}.
+# Образ: GHCR, ghcr.io/<владелец>/<репозиторий>/personal-assistant. OpenClaw, Basic Memory и Syncthing -
+# готовые образы, их версии задаёт .env на сервере.
 #
 #   пуш в dev       test → build: образы с тегами dev, sha-<коммит>, build-<N>
 #   пуш в main      ничего
@@ -14,11 +15,13 @@
 #
 # Настройки окружения production (Settings → Environments), переменные:
 #   DEPLOY_HOST, DEPLOY_PORT, DEPLOY_USER, DEPLOY_PATH       - сервер и каталог деплоя
-#   COMPOSE_PROJECT_NAME, COMPOSE_PROFILES                   - проект compose и профили (obsidian-sync)
-#   PERSONAL_ASSISTANT_CONTAINER, OPENCLAW_INIT_CONTAINER,
-#   OPENCLAW_GATEWAY_CONTAINER, OBSIDIAN_WEBDAV_CONTAINER,
-#   OBSIDIAN_HTTPS_CONTAINER                                 - имена контейнеров
-#   PERSONAL_ASSISTANT_PORT, OPENCLAW_UI_PORT                - порты на 127.0.0.1 сервера
+#   COMPOSE_PROJECT_NAME                                     - проект compose
+#   PERSONAL_ASSISTANT_CONTAINER, DATA_INIT_CONTAINER,
+#   BASIC_MEMORY_CONTAINER, SYNCTHING_CONTAINER,
+#   OPENCLAW_GATEWAY_CONTAINER                               - имена контейнеров
+#   PERSONAL_ASSISTANT_PORT, OPENCLAW_UI_PORT,
+#   SYNCTHING_UI_PORT                                        - порты на 127.0.0.1 сервера
+#   SYNCTHING_SYNC_PORT                                      - публичный порт синхронизации Syncthing
 # секреты:
 #   SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS                         - доступ к серверу
 #   DOTENV                                                   - необязательно: целиком .env приложения
@@ -42,7 +45,7 @@ permissions:
 
 env:
   # Образы этого репозитория; имя в GHCR - только строчными
-  IMAGE_NAMES: personal-assistant obsidian-webdav
+  IMAGE_NAMES: personal-assistant
   DEV_TAG: dev
 
 jobs:
@@ -82,9 +85,6 @@ jobs:
           - name: personal-assistant
             context: .
             dockerfile: Dockerfile
-          - name: obsidian-webdav
-            context: deploy/webdav
-            dockerfile: deploy/webdav/Dockerfile
     steps:
       - uses: actions/checkout@v5
 
@@ -200,11 +200,11 @@ jobs:
           private-key: ${{ secrets.SSH_PRIVATE_KEY }}
           known-hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
 
-      # Только то, что нужно для запуска: compose, скрипты, OpenClaw, WebDAV; данные и секреты не трогаются
+      # Только то, что нужно для запуска: compose, скрипты, конфиг и личность OpenClaw; данные и секреты не трогаются
       - name: Конфиги
         run: |
           set -euo pipefail
-          tar -czf - compose.yml .env.example scripts openclaw deploy \
+          tar -czf - compose.yml .env.example scripts openclaw \
             | ssh deploy "mkdir -p '$DEPLOY_PATH' && tar -xzf - -C '$DEPLOY_PATH'"
 
       - name: Секреты приложения (.env)
@@ -221,14 +221,15 @@ jobs:
       - name: deploy.env и образы
         env:
           COMPOSE_PROJECT_NAME: ${{ vars.COMPOSE_PROJECT_NAME }}
-          COMPOSE_PROFILES: ${{ vars.COMPOSE_PROFILES }}
           PERSONAL_ASSISTANT_CONTAINER: ${{ vars.PERSONAL_ASSISTANT_CONTAINER }}
-          OPENCLAW_INIT_CONTAINER: ${{ vars.OPENCLAW_INIT_CONTAINER }}
+          DATA_INIT_CONTAINER: ${{ vars.DATA_INIT_CONTAINER }}
+          BASIC_MEMORY_CONTAINER: ${{ vars.BASIC_MEMORY_CONTAINER }}
+          SYNCTHING_CONTAINER: ${{ vars.SYNCTHING_CONTAINER }}
           OPENCLAW_GATEWAY_CONTAINER: ${{ vars.OPENCLAW_GATEWAY_CONTAINER }}
-          OBSIDIAN_WEBDAV_CONTAINER: ${{ vars.OBSIDIAN_WEBDAV_CONTAINER }}
-          OBSIDIAN_HTTPS_CONTAINER: ${{ vars.OBSIDIAN_HTTPS_CONTAINER }}
           PERSONAL_ASSISTANT_PORT: ${{ vars.PERSONAL_ASSISTANT_PORT }}
           OPENCLAW_UI_PORT: ${{ vars.OPENCLAW_UI_PORT }}
+          SYNCTHING_UI_PORT: ${{ vars.SYNCTHING_UI_PORT }}
+          SYNCTHING_SYNC_PORT: ${{ vars.SYNCTHING_SYNC_PORT }}
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
         run: |
@@ -236,14 +237,13 @@ jobs:
           prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
           {
             echo "# Создан CI ($GITHUB_REPOSITORY, запуск $GITHUB_RUN_ID): правки затрёт следующий деплой"
-            for name in COMPOSE_PROJECT_NAME COMPOSE_PROFILES \
-              PERSONAL_ASSISTANT_CONTAINER OPENCLAW_INIT_CONTAINER OPENCLAW_GATEWAY_CONTAINER \
-              OBSIDIAN_WEBDAV_CONTAINER OBSIDIAN_HTTPS_CONTAINER \
-              PERSONAL_ASSISTANT_PORT OPENCLAW_UI_PORT; do
+            for name in COMPOSE_PROJECT_NAME \
+              PERSONAL_ASSISTANT_CONTAINER DATA_INIT_CONTAINER BASIC_MEMORY_CONTAINER \
+              SYNCTHING_CONTAINER OPENCLAW_GATEWAY_CONTAINER \
+              PERSONAL_ASSISTANT_PORT OPENCLAW_UI_PORT SYNCTHING_UI_PORT SYNCTHING_SYNC_PORT; do
               if [ -n "${!name}" ]; then echo "$name=${!name}"; fi
             done
             echo "PERSONAL_ASSISTANT_IMAGE=$prefix/personal-assistant:$TAG"
-            echo "OBSIDIAN_WEBDAV_IMAGE=$prefix/obsidian-webdav:$TAG"
           } > deploy.env.new
           cat deploy.env.new
           ssh deploy "cat > '$DEPLOY_PATH/deploy.env.new'" < deploy.env.new
@@ -325,7 +325,7 @@ jobs:
           done
 
       - name: Комплект для развёртывания
-        run: tar -czf "personal-secretary-$TAG.tar.gz" compose.yml .env.example scripts openclaw deploy
+        run: tar -czf "personal-secretary-$TAG.tar.gz" compose.yml .env.example scripts openclaw
 
       # checkout кладёт тег без аннотации: забираем его заново, чтобы прочитать текст
       - name: Заметки к релизу
