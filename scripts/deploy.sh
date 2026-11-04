@@ -1,14 +1,15 @@
 #!/usr/bin/env sh
 # Шаги CI/CD на целевом сервере. Запускает GitHub Actions по SSH из каталога деплоя:
 #   scripts/deploy.sh deliver   - deploy.env от CI, вход в GHCR (токен в stdin), загрузка образов
-#   scripts/deploy.sh up        - пересоздание контейнеров, патч конфига OpenClaw, ожидание healthy
+#   scripts/deploy.sh up        - пересоздание контейнеров, настройка OpenClaw (онбординг при первом запуске, плагин,
+#                                 патч, имя агента) при остановленном шлюзе, ожидание healthy
 # deploy.env хранит образы, имена контейнеров, порты и проект compose; .env - секреты приложения
 set -eu
 cd "$(dirname "$0")/.."
 
-# Образ, который собирает CI; OpenClaw, Basic Memory и Syncthing остаются на версиях из .env
+# Образ, который собирает CI; OpenClaw, Basic Memory и Syncthing - на версиях, закреплённых в compose.yml
 IMAGE_KEYS="PERSONAL_ASSISTANT_IMAGE"
-HEALTH_ATTEMPTS=60
+HEALTH_ATTEMPTS=100
 HEALTH_DELAY=3
 
 load_env() {
@@ -73,16 +74,46 @@ up() {
   # Остальные каталоги data/ создаёт и отдаёт uid 1000 контейнер data-init
   mkdir -p secrets data/assistant
 
-  # Пересоздаём всё: data-init заново кладёт личность агента из openclaw/workspace
-  docker compose up -d --no-build --force-recreate
+  # Шлюз поднимается последним: его конфиг меняется, пока он остановлен. В работающий шлюз
+  # команды идут через exec, и перезапуск шлюза обрывал бы их (exit 137)
+  docker compose stop openclaw-gateway
+  # Пересоздаём: data-init заново кладёт личность агента из openclaw/workspace
+  docker compose up -d --no-build --force-recreate data-init personal-assistant basic-memory syncthing
   wait_healthy "${PERSONAL_ASSISTANT_CONTAINER:-personal-assistant}"
 
-  if [ ! -f data/openclaw/openclaw.json ]; then
-    echo "::warning::OpenClaw ещё не настроен: выполните onboard из README, затем перезапустите деплой"
-    return 0
+  configure_openclaw
+  docker compose up -d --no-build --force-recreate openclaw-gateway
+  wait_healthy "${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}"
+  declare_automations
+}
+
+configure_openclaw() {
+  # Без онбординга шлюз при старте сам пишет конфиг без gateway.mode и потом не запускается
+  if ! sh scripts/openclaw.sh config get gateway.mode >/dev/null 2>&1; then
+    echo "OpenClaw не настроен: онбординг"
+    sh scripts/openclaw.sh onboard --non-interactive --accept-risk \
+      --mode local --no-install-daemon --skip-bootstrap --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
+      --auth-choice openrouter-api-key --secret-input-mode ref \
+      --gateway-auth token --gateway-bind lan --gateway-token-ref-env OPENCLAW_GATEWAY_TOKEN
+  fi
+  if ! sh scripts/openclaw.sh plugins list 2>/dev/null | grep -q duckduckgo; then
+    sh scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin
   fi
   sh scripts/openclaw.sh config patch --stdin <openclaw/openclaw.patch.json5
-  wait_healthy "${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}"
+  sh scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
+}
+
+# Автоматизации живут в состоянии шлюза, а не в конфиге: объявляются в работающем шлюзе.
+# Тот же --declaration-key обновляет задачу, а не создаёт копию
+declare_automations() {
+  sh scripts/openclaw.sh automations add --declaration-key morning-briefing --name "Утренняя сводка" \
+    --cron "0 8 * * *" --tz "$(env_value TIMEZONE)" --session isolated \
+    --message "Утренняя сводка по навыку secretary" \
+    --announce --channel telegram --to "$(env_value TELEGRAM_CHAT_ID)" >/dev/null
+}
+
+env_value() {
+  sed -n "s/^$1=//p" .env | tail -n 1
 }
 
 case "${1:-}" in

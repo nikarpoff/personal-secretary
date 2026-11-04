@@ -30,7 +30,7 @@ services:
   # 2. отдаёт каталоги OpenClaw, заметок, Basic Memory и Syncthing пользователю uid 1000,
   #    от которого они работают: отсутствующий каталог Docker создаёт от root
   data-init:
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.10.9}
     container_name: ${DATA_INIT_CONTAINER:-data-init}
     user: "0:0"
     entrypoint:
@@ -49,7 +49,7 @@ services:
   # Заметки: Markdown-хранилище Obsidian в data/notes, агент работает с ним через MCP Basic Memory.
   # У HTTP-транспорта нет авторизации: порт не публикуется, доступ только из сети compose
   basic-memory:
-    image: ${BASIC_MEMORY_IMAGE:-ghcr.io/basicmachines-co/basic-memory:latest}
+    image: ${BASIC_MEMORY_IMAGE:-ghcr.io/basicmachines-co/basic-memory:1.0.0}
     container_name: ${BASIC_MEMORY_CONTAINER:-basic-memory}
     command: ["basic-memory", "mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000", "--project", "main"]
     # Только нужные ему переменные, а не весь .env: это сторонний контейнер
@@ -74,7 +74,7 @@ services:
 
   # Синхронизация data/notes с Obsidian на ваших устройствах
   syncthing:
-    image: ${SYNCTHING_IMAGE:-syncthing/syncthing:latest}
+    image: ${SYNCTHING_IMAGE:-syncthing/syncthing:2.1.7}
     container_name: ${SYNCTHING_CONTAINER:-syncthing}
     hostname: personal-assistant
     volumes:
@@ -94,7 +94,7 @@ services:
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
     container_name: ${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.10.9}
     env_file: .env
     environment:
       HOME: /home/node
@@ -131,6 +131,8 @@ services:
     healthcheck:
       test: ["CMD", "node", "dist/docker-healthcheck.js"]
       interval: 30s
-      timeout: 5s
+      # На небольшом сервере шлюз стартует около минуты, а проверка под нагрузкой идёт дольше 5 секунд
+      timeout: 15s
       retries: 5
-      start_period: 20s
+      start_period: 120s
+      start_interval: 5s
