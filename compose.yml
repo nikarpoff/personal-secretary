@@ -131,6 +131,8 @@ services:
     healthcheck:
       test: ["CMD", "node", "dist/docker-healthcheck.js"]
       interval: 30s
-      timeout: 5s
+      # На небольшом сервере шлюз стартует около минуты, а проверка под нагрузкой идёт дольше 5 секунд
+      timeout: 15s
       retries: 5
-      start_period: 20s
+      start_period: 120s
+      start_interval: 5s
