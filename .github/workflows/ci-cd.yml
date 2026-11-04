@@ -1,0 +1,372 @@
+# =====================================================================
+# CI/CD: test → build на dev, delivery → deploy → release на релизном теге
+# =====================================================================
+#
+# Образ: GHCR, ghcr.io/<владелец>/<репозиторий>/personal-assistant. OpenClaw, Basic Memory и Syncthing -
+# готовые образы, их версии задаёт .env на сервере.
+#
+#   пуш в dev       test → build: образы с тегами dev, sha-<коммит>, build-<N>
+#   пуш в main      ничего
+#   тег X.Y.Z-rcN   delivery → deploy → release (pre-release)
+#   тег X.Y.Z       delivery → deploy → release, образы получают latest
+#
+# Релиз не собирает образ: delivery вешает версию на последний билд dev (тег dev) и выкатывает её.
+# Если этот билд собран не из коммита тега, delivery предупреждает.
+#
+# Настройки окружения production (Settings → Environments), переменные:
+#   DEPLOY_HOST, DEPLOY_PORT, DEPLOY_USER, DEPLOY_PATH       - сервер и каталог деплоя
+#   COMPOSE_PROJECT_NAME                                     - проект compose
+#   PERSONAL_ASSISTANT_CONTAINER, DATA_INIT_CONTAINER,
+#   BASIC_MEMORY_CONTAINER, SYNCTHING_CONTAINER,
+#   OPENCLAW_GATEWAY_CONTAINER                               - имена контейнеров
+#   PERSONAL_ASSISTANT_PORT, OPENCLAW_UI_PORT,
+#   SYNCTHING_UI_PORT                                        - порты на 127.0.0.1 сервера
+#   SYNCTHING_SYNC_PORT                                      - публичный порт синхронизации Syncthing
+# секреты:
+#   SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS                         - доступ к серверу
+#   DOTENV                                                   - необязательно: целиком .env приложения
+#   GOOGLE_CREDENTIALS                                       - необязательно: secrets/google.json (токен Google)
+
+name: ci-cd
+
+on:
+  push:
+    branches: [dev]
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+      - "[0-9]+.[0-9]+.[0-9]+-rc[0-9]+"
+
+# Два запуска одной ветки или тега не идут одновременно
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Образы этого репозитория; имя в GHCR - только строчными
+  IMAGE_NAMES: personal-assistant
+  DEV_TAG: dev
+
+jobs:
+  # =====================================================================
+  # TEST STAGE: pytest на раннере GitHub
+  # =====================================================================
+  test:
+    if: github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Зависимости
+        run: uv sync --frozen
+
+      - name: Тесты
+        run: uv run --frozen pytest -q
+
+  # =====================================================================
+  # BUILD STAGE: образы в GHCR, только после зелёных тестов
+  # =====================================================================
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: personal-assistant
+            context: .
+            dockerfile: Dockerfile
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Теги образа
+        id: tags
+        run: |
+          set -euo pipefail
+          image="ghcr.io/${GITHUB_REPOSITORY,,}/${{ matrix.name }}"
+          {
+            echo "list<<EOF"
+            echo "$image:$DEV_TAG"
+            echo "$image:sha-${GITHUB_SHA::12}"
+            echo "$image:build-$GITHUB_RUN_NUMBER"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Сборка и публикация
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: ${{ steps.tags.outputs.list }}
+          # source связывает пакет GHCR с репозиторием: видимость и доступ берутся от него
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  # =====================================================================
+  # DELIVERY STAGE: версия на билде dev, конфиги, deploy.env и образы на сервере
+  # =====================================================================
+  delivery:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+    env:
+      TAG: ${{ github.ref_name }}
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Проверка настроек окружения
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+        run: |
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_PATH SSH_PRIVATE_KEY; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::Окружение production: не заданы$missing"
+            exit 1
+          fi
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n 1)
+          if [ "${TAG%%-*}" != "$version" ]; then
+            echo "::warning::Тег $TAG не совпадает с версией $version в pyproject.toml"
+          fi
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Без пересборки: версия - это последний билд dev, который прошёл тесты
+      - name: Версия на билде dev
+        run: |
+          set -euo pipefail
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for name in $IMAGE_NAMES; do
+            image="$prefix/$name"
+            # Re-run старого тега - откат или повтор деплоя: уже выпущенная версия не перевешивается
+            if docker buildx imagetools inspect "$image:$TAG" >/dev/null 2>&1; then
+              echo "$image:$TAG уже есть, выкатываем его"
+              continue
+            fi
+            if ! dev_manifest=$(docker buildx imagetools inspect --raw "$image:$DEV_TAG" 2>/dev/null); then
+              echo "::error::Нет образа $image:$DEV_TAG: сначала запушьте dev и дождитесь сборки"
+              exit 1
+            fi
+            commit_manifest=$(docker buildx imagetools inspect --raw "$image:sha-${GITHUB_SHA::12}" 2>/dev/null || true)
+            if [ "$dev_manifest" != "$commit_manifest" ]; then
+              echo "::warning::$name: последний билд dev собран не из коммита тега ${GITHUB_SHA::12}"
+            fi
+            docker buildx imagetools create -t "$image:$TAG" "$image:$DEV_TAG"
+          done
+
+      - uses: ./.github/actions/ssh-setup
+        with:
+          host: ${{ vars.DEPLOY_HOST }}
+          port: ${{ vars.DEPLOY_PORT || '22' }}
+          user: ${{ vars.DEPLOY_USER }}
+          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known-hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      # Только то, что нужно для запуска: compose, скрипты, конфиг и личность OpenClaw; данные и секреты не трогаются
+      - name: Конфиги
+        run: |
+          set -euo pipefail
+          tar -czf - compose.yml .env.example scripts openclaw \
+            | ssh deploy "mkdir -p '$DEPLOY_PATH' && tar -xzf - -C '$DEPLOY_PATH'"
+
+      - name: Секреты приложения (.env)
+        env:
+          DOTENV: ${{ secrets.DOTENV }}
+        run: |
+          set -euo pipefail
+          if [ -z "$DOTENV" ]; then
+            echo "Секрет DOTENV не задан: на сервере остаётся свой .env"
+            exit 0
+          fi
+          printf '%s\n' "$DOTENV" | ssh deploy "umask 077 && cat > '$DEPLOY_PATH/.env'"
+
+      # Токен из scripts/authorize_google.py или ключ сервисного аккаунта; в контейнере - /secrets/google.json
+      - name: Доступ к Google (secrets/google.json)
+        env:
+          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+        run: |
+          set -euo pipefail
+          if [ -z "$GOOGLE_CREDENTIALS" ]; then
+            echo "Секрет GOOGLE_CREDENTIALS не задан: на сервере остаётся свой secrets/google.json"
+            exit 0
+          fi
+          if ! printf '%s' "$GOOGLE_CREDENTIALS" | jq -e 'type == "object"' >/dev/null 2>&1; then
+            echo "::error::GOOGLE_CREDENTIALS - не JSON-объект: вставьте содержимое google.json целиком"
+            exit 1
+          fi
+          printf '%s\n' "$GOOGLE_CREDENTIALS" \
+            | ssh deploy "umask 077 && mkdir -p '$DEPLOY_PATH/secrets' && cat > '$DEPLOY_PATH/secrets/google.json'"
+
+      - name: deploy.env и образы
+        env:
+          COMPOSE_PROJECT_NAME: ${{ vars.COMPOSE_PROJECT_NAME }}
+          PERSONAL_ASSISTANT_CONTAINER: ${{ vars.PERSONAL_ASSISTANT_CONTAINER }}
+          DATA_INIT_CONTAINER: ${{ vars.DATA_INIT_CONTAINER }}
+          BASIC_MEMORY_CONTAINER: ${{ vars.BASIC_MEMORY_CONTAINER }}
+          SYNCTHING_CONTAINER: ${{ vars.SYNCTHING_CONTAINER }}
+          OPENCLAW_GATEWAY_CONTAINER: ${{ vars.OPENCLAW_GATEWAY_CONTAINER }}
+          PERSONAL_ASSISTANT_PORT: ${{ vars.PERSONAL_ASSISTANT_PORT }}
+          OPENCLAW_UI_PORT: ${{ vars.OPENCLAW_UI_PORT }}
+          SYNCTHING_UI_PORT: ${{ vars.SYNCTHING_UI_PORT }}
+          SYNCTHING_SYNC_PORT: ${{ vars.SYNCTHING_SYNC_PORT }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          {
+            echo "# Создан CI ($GITHUB_REPOSITORY, запуск $GITHUB_RUN_ID): правки затрёт следующий деплой"
+            for name in COMPOSE_PROJECT_NAME \
+              PERSONAL_ASSISTANT_CONTAINER DATA_INIT_CONTAINER BASIC_MEMORY_CONTAINER \
+              SYNCTHING_CONTAINER OPENCLAW_GATEWAY_CONTAINER \
+              PERSONAL_ASSISTANT_PORT OPENCLAW_UI_PORT SYNCTHING_UI_PORT SYNCTHING_SYNC_PORT; do
+              if [ -n "${!name}" ]; then echo "$name=${!name}"; fi
+            done
+            echo "PERSONAL_ASSISTANT_IMAGE=$prefix/personal-assistant:$TAG"
+          } > deploy.env.new
+          cat deploy.env.new
+          ssh deploy "cat > '$DEPLOY_PATH/deploy.env.new'" < deploy.env.new
+
+          # Токен запуска живёт до конца задания: на сервере он нужен только на время pull
+          printf '%s' "$GHCR_TOKEN" \
+            | ssh deploy "cd '$DEPLOY_PATH' && REGISTRY_USER='$GHCR_USER' sh scripts/deploy.sh deliver"
+
+  # =====================================================================
+  # DEPLOY STAGE: пересоздание контейнеров и проверка здоровья
+  # =====================================================================
+  deploy:
+    needs: delivery
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
+    env:
+      DEPLOY_PATH: ${{ vars.DEPLOY_PATH }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: .github
+
+      - uses: ./.github/actions/ssh-setup
+        with:
+          host: ${{ vars.DEPLOY_HOST }}
+          port: ${{ vars.DEPLOY_PORT || '22' }}
+          user: ${{ vars.DEPLOY_USER }}
+          private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+          known-hosts: ${{ secrets.SSH_KNOWN_HOSTS }}
+
+      - name: Запуск сервисов
+        run: ssh deploy "cd '$DEPLOY_PATH' && sh scripts/deploy.sh up"
+
+      - name: Состояние
+        if: always()
+        run: |
+          {
+            echo "### production: ${{ github.ref_name }}"
+            echo '```'
+            ssh deploy "cd '$DEPLOY_PATH' && set -a && . ./deploy.env && set +a && docker compose ps --format 'table {{.Name}}\t{{.Image}}\t{{.Status}}'"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # =====================================================================
+  # RELEASE STAGE: latest на образах и GitHub Release с заметками из аннотации тега
+  # =====================================================================
+  release:
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    env:
+      TAG: ${{ github.ref_name }}
+      PRERELEASE: ${{ contains(github.ref_name, '-rc') }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # latest - только у проверенного деплоем прод-релиза, кандидаты его не получают
+      - name: Тег latest
+        if: env.PRERELEASE != 'true'
+        run: |
+          set -euo pipefail
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          for name in $IMAGE_NAMES; do
+            docker buildx imagetools create -t "$prefix/$name:latest" "$prefix/$name:$TAG"
+          done
+
+      - name: Комплект для развёртывания
+        run: tar -czf "personal-secretary-$TAG.tar.gz" compose.yml .env.example scripts openclaw
+
+      # checkout кладёт тег без аннотации: забираем его заново, чтобы прочитать текст
+      - name: Заметки к релизу
+        run: |
+          set -euo pipefail
+          prefix="ghcr.io/${GITHUB_REPOSITORY,,}"
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          {
+            if [ "$(git cat-file -t "$TAG")" = tag ]; then
+              git tag -l --format='%(contents)' "$TAG" | sed '/-----BEGIN PGP SIGNATURE-----/,$d'
+              echo
+            fi
+            echo "**Образы** (последний билд \`$DEV_TAG\` на момент релиза)"
+            echo
+            for name in $IMAGE_NAMES; do
+              echo "- \`$prefix/$name:$TAG\`"
+            done
+          } > release_notes.md
+          cat release_notes.md
+
+      - name: Публикация
+        run: |
+          set -euo pipefail
+          args=(--title "$TAG" --notes-file release_notes.md --generate-notes --verify-tag)
+          if [ "$PRERELEASE" = true ]; then args+=(--prerelease); else args+=(--latest); fi
+          gh release create "$TAG" "personal-secretary-$TAG.tar.gz" "${args[@]}"

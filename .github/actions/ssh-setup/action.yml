@@ -1,0 +1,57 @@
+name: ssh-setup
+description: Ключ и known_hosts для целевого сервера; дальше он доступен как ssh deploy
+
+inputs:
+  host:
+    description: Адрес сервера
+    required: true
+  port:
+    description: Порт SSH
+    required: false
+    default: "22"
+  user:
+    description: Пользователь на сервере, состоит в группе docker
+    required: true
+  private-key:
+    description: Приватный ключ деплоя
+    required: true
+  known-hosts:
+    description: Строки known_hosts сервера; пусто - ssh-keyscan (без защиты от подмены хоста)
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Настройка SSH
+      shell: bash
+      env:
+        DEPLOY_HOST: ${{ inputs.host }}
+        DEPLOY_PORT: ${{ inputs.port }}
+        DEPLOY_USER: ${{ inputs.user }}
+        PRIVATE_KEY: ${{ inputs.private-key }}
+        KNOWN_HOSTS: ${{ inputs.known-hosts }}
+      run: |
+        set -euo pipefail
+        install -m 700 -d ~/.ssh
+        printf '%s\n' "$PRIVATE_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+
+        if [ -n "$KNOWN_HOSTS" ]; then
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+        else
+          echo "::warning::SSH_KNOWN_HOSTS не задан: ключ сервера взят через ssh-keyscan без проверки"
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" > ~/.ssh/known_hosts 2>/dev/null
+        fi
+
+        cat > ~/.ssh/config <<EOF
+        Host deploy
+          HostName $DEPLOY_HOST
+          Port $DEPLOY_PORT
+          User $DEPLOY_USER
+          IdentityFile ~/.ssh/deploy_key
+          IdentitiesOnly yes
+          StrictHostKeyChecking yes
+          ServerAliveInterval 30
+        EOF
+        chmod 600 ~/.ssh/config

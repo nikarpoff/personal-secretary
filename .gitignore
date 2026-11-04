@@ -23,9 +23,11 @@ venv/
 .vscode/
 *.DS_Store
 
-# Артефакты CI
+# Артефакты CI и деплоя
 *.tar.gz
 release_notes.md
+deploy.env
+deploy.env.new
 
 # Данные и секреты
 data/
