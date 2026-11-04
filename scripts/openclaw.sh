@@ -6,6 +6,14 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# После деплоя из CI проект compose, образы и имена контейнеров лежат в deploy.env
+if [ -f deploy.env ]; then
+  set -a
+  . ./deploy.env
+  set +a
+fi
+
+
 if [ -n "$(docker compose ps --status running -q openclaw-gateway)" ]; then
   exec docker compose exec -T openclaw-gateway node dist/index.js "$@"
 fi

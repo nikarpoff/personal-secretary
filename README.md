@@ -199,3 +199,7 @@ uv run fastapi dev app/main.py
 - В Whisper уходят только `model`, `language` и файл: нестандартные параметры сервиса задаются его значениями по умолчанию. Whisper во внутренней сети требует `models.providers.openai.request.allowPrivateNetwork: true` в патче.
 - Текст заметок уходит эмбеддеру (OpenRouter или ваш сервис), как и разговоры - модели.
 - Синтаксис OpenClaw проверен на версии 2026.10.9, Basic Memory - на 1.0.0.
+
+## CI/CD
+
+Пуш в `dev` прогоняет тесты и собирает образ в GHCR, релизный тег `X.Y.Z` выкатывает последний билд `dev` на сервер по SSH и публикует GitHub Release. Настройка окружения и первый деплой - [docs/ci-cd.md](docs/ci-cd.md).

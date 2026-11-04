@@ -1,16 +1,18 @@
 services:
   personal-assistant:
+    # CI задаёт образ из GHCR и имена контейнеров в deploy.env; локально образ собирается из исходников
+    image: ${PERSONAL_ASSISTANT_IMAGE:-personal-assistant:latest}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: personal-assistant
+    container_name: ${PERSONAL_ASSISTANT_CONTAINER:-personal-assistant}
     env_file: .env
     volumes:
       - ./data/assistant:/data
       - ./secrets:/secrets:ro
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
-      - "127.0.0.1:8090:8000"
+      - "127.0.0.1:${PERSONAL_ASSISTANT_PORT:-8090}:8000"
     extra_hosts:
       host.docker.internal: host-gateway
     restart: unless-stopped
@@ -29,6 +31,7 @@ services:
   #    от которого они работают: отсутствующий каталог Docker создаёт от root
   data-init:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    container_name: ${DATA_INIT_CONTAINER:-data-init}
     user: "0:0"
     entrypoint:
       - sh
@@ -47,7 +50,7 @@ services:
   # У HTTP-транспорта нет авторизации: порт не публикуется, доступ только из сети compose
   basic-memory:
     image: ${BASIC_MEMORY_IMAGE:-ghcr.io/basicmachines-co/basic-memory:latest}
-    container_name: basic-memory
+    container_name: ${BASIC_MEMORY_CONTAINER:-basic-memory}
     command: ["basic-memory", "mcp", "--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000", "--project", "main"]
     # Только нужные ему переменные, а не весь .env: это сторонний контейнер
     environment:
@@ -72,17 +75,17 @@ services:
   # Синхронизация data/notes с Obsidian на ваших устройствах
   syncthing:
     image: ${SYNCTHING_IMAGE:-syncthing/syncthing:latest}
-    container_name: syncthing
+    container_name: ${SYNCTHING_CONTAINER:-syncthing}
     hostname: personal-assistant
     volumes:
       - ./data/syncthing:/var/syncthing
       - ./data/notes:/var/syncthing/notes
     ports:
       # Веб-интерфейс - через SSH-туннель
-      - "127.0.0.1:8384:8384"
+      - "127.0.0.1:${SYNCTHING_UI_PORT:-8384}:8384"
       # Прямые соединения с устройствами; без них Syncthing работает через публичные relay
-      - "22000:22000/tcp"
-      - "22000:22000/udp"
+      - "${SYNCTHING_SYNC_PORT:-22000}:22000/tcp"
+      - "${SYNCTHING_SYNC_PORT:-22000}:22000/udp"
     depends_on:
       data-init:
         condition: service_completed_successfully
@@ -90,7 +93,7 @@ services:
 
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
-    container_name: openclaw-gateway
+    container_name: ${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     env_file: .env
     environment:
@@ -116,7 +119,7 @@ services:
       host.docker.internal: host-gateway
     ports:
       # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
-      - "127.0.0.1:18789:18789"
+      - "127.0.0.1:${OPENCLAW_UI_PORT:-18789}:18789"
     depends_on:
       data-init:
         condition: service_completed_successfully
