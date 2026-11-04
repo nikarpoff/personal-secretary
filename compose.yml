@@ -1,9 +1,11 @@
 services:
   personal-assistant:
+    # CI задаёт образ из GHCR и имена контейнеров в deploy.env; локально образ собирается из исходников
+    image: ${PERSONAL_ASSISTANT_IMAGE:-personal-assistant:latest}
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: personal-assistant
+    container_name: ${PERSONAL_ASSISTANT_CONTAINER:-personal-assistant}
     env_file: .env
     volumes:
       - ./secrets:/secrets:ro
@@ -12,7 +14,7 @@ services:
       - ./data/assistant-state:/assistant-state
     ports:
       # Только локально: OpenClaw ходит по внутренней сети compose
-      - "127.0.0.1:8090:8000"
+      - "127.0.0.1:${PERSONAL_ASSISTANT_PORT:-8090}:8000"
     extra_hosts:
       host.docker.internal: host-gateway
     restart: unless-stopped
@@ -32,6 +34,7 @@ services:
   # 2. отдаёт data/openclaw пользователю node (uid 1000): отсутствующий каталог Docker создаёт от root
   openclaw-init:
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
+    container_name: ${OPENCLAW_INIT_CONTAINER:-openclaw-init}
     user: "0:0"
     entrypoint:
       - sh
@@ -48,7 +51,7 @@ services:
 
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
-    container_name: openclaw-gateway
+    container_name: ${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}
     image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:latest}
     env_file: .env
     environment:
@@ -76,7 +79,7 @@ services:
       host.docker.internal: host-gateway
     ports:
       # Control UI: открывайте через SSH-туннель, наружу порт не публикуется
-      - "127.0.0.1:18789:18789"
+      - "127.0.0.1:${OPENCLAW_UI_PORT:-18789}:18789"
     depends_on:
       openclaw-init:
         condition: service_completed_successfully
@@ -94,8 +97,10 @@ services:
   # Configure the domain and secrets/webdav.env as described in docs/obsidian.md.
   obsidian-webdav:
     profiles: [obsidian-sync]
+    image: ${OBSIDIAN_WEBDAV_IMAGE:-obsidian-webdav:latest}
     build:
       context: ./deploy/webdav
+    container_name: ${OBSIDIAN_WEBDAV_CONTAINER:-obsidian-webdav}
     env_file:
       - path: ./secrets/webdav.env
         required: false
@@ -119,6 +124,7 @@ services:
   obsidian-https:
     profiles: [obsidian-sync]
     image: caddy:2.10.2-alpine
+    container_name: ${OBSIDIAN_HTTPS_CONTAINER:-obsidian-https}
     environment:
       # Must be a public hostname with DNS pointing at this VPS. Empty means fail closed.
       OBSIDIAN_SYNC_DOMAIN: ${OBSIDIAN_SYNC_DOMAIN:-}

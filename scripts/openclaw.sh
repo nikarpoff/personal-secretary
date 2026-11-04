@@ -6,6 +6,13 @@
 set -e
 cd "$(dirname "$0")/.."
 
+# После деплоя из CI проект compose, образы и имена контейнеров лежат в deploy.env
+if [ -f deploy.env ]; then
+  set -a
+  . ./deploy.env
+  set +a
+fi
+
 cli_entry=dist/index.js
 if [ "${1:-}" = "config" ] && [ "${2:-}" = "patch" ]; then
   for argument in "$@"; do
