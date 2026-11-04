@@ -84,6 +84,7 @@ up() {
   configure_openclaw
   docker compose up -d --no-build --force-recreate openclaw-gateway
   wait_healthy "${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}"
+  declare_automations
 }
 
 configure_openclaw() {
@@ -100,6 +101,19 @@ configure_openclaw() {
   fi
   sh scripts/openclaw.sh config patch --stdin <openclaw/openclaw.patch.json5
   sh scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
+}
+
+# Автоматизации живут в состоянии шлюза, а не в конфиге: объявляются в работающем шлюзе.
+# Тот же --declaration-key обновляет задачу, а не создаёт копию
+declare_automations() {
+  sh scripts/openclaw.sh automations add --declaration-key morning-briefing --name "Утренняя сводка" \
+    --cron "0 8 * * *" --tz "$(env_value TIMEZONE)" --session isolated \
+    --message "Утренняя сводка по навыку secretary" \
+    --announce --channel telegram --to "$(env_value TELEGRAM_CHAT_ID)" >/dev/null
+}
+
+env_value() {
+  sed -n "s/^$1=//p" .env | tail -n 1
 }
 
 case "${1:-}" in
