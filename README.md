@@ -198,7 +198,7 @@ uv run fastapi dev app/main.py
 - Один календарь и один владелец.
 - В Whisper уходят только `model`, `language` и файл: нестандартные параметры сервиса задаются его значениями по умолчанию. Whisper во внутренней сети требует `models.providers.openai.request.allowPrivateNetwork: true` в патче.
 - Текст заметок уходит эмбеддеру (OpenRouter или ваш сервис), как и разговоры - модели.
-- Синтаксис OpenClaw проверен на версии 2026.10.9, Basic Memory - на 1.0.0.
+- Версии OpenClaw (2026.10.9), Basic Memory (1.0.0) и Syncthing (2.1.7) закреплены в `compose.yml`; другую задают `OPENCLAW_IMAGE`, `BASIC_MEMORY_IMAGE`, `SYNCTHING_IMAGE` в `.env`.
 
 ## CI/CD
 

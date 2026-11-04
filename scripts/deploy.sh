@@ -7,7 +7,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-# Образ, который собирает CI; OpenClaw, Basic Memory и Syncthing остаются на версиях из .env
+# Образ, который собирает CI; OpenClaw, Basic Memory и Syncthing - на версиях, закреплённых в compose.yml
 IMAGE_KEYS="PERSONAL_ASSISTANT_IMAGE"
 HEALTH_ATTEMPTS=100
 HEALTH_DELAY=3
