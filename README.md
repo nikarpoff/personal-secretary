@@ -153,6 +153,25 @@ scripts/openclaw.sh dashboard --no-open          # одноразовая ссы
 
 Ссылка входит и одобряет браузер как устройство владельца. При входе по `OPENCLAW_GATEWAY_TOKEN` устройство одобряют командами `devices list` и `devices approve <id>`.
 
+## Память OpenClaw
+
+В патче через штатный [`plugins.deny`](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/tools/plugin.md) отключены `cua-computer`, `linux-node`, `device-pair`, `github`, `geolocation`, `talk-voice`, `anthropic`, `xai` и `ollama`. Их код не загружается, файлы образа остаются на месте. Модель через OpenRouter, Telegram, Whisper, веб-поиск, MCP и встроенная память сохраняются. `device-pair` отвечает за подключение устройств из чата; вход в Control UI и CLI-команды `devices` от него не зависят.
+
+Healthcheck обращается к штатному `/healthz` через уже установленный в образе `curl`, без отдельного Node-процесса каждые 30 секунд. Лимитов памяти и изменений параллелизма нет.
+
+При деплое изменения применяет `scripts/deploy.sh up`. Для уже работающего шлюза без CI:
+
+```bash
+scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
+docker compose up -d --no-deps openclaw-gateway
+scripts/openclaw.sh plugins list
+scripts/openclaw.sh mcp probe personal-assistant
+scripts/openclaw.sh mcp probe notes
+docker compose stats --no-stream openclaw-gateway
+```
+
+Расход RAM сравнивайте до и после при одинаковой нагрузке, после прогрева и нескольких сообщений, включая голосовое, поиск и работу с заметками. Отключение плагинов сокращает загружаемый код; размер экономии зависит от того, какие из них были активны. Само по себе это не подтверждает устранение возможной утечки при долгой работе.
+
 ## Личность агента
 
 Имя, характер и правила - `openclaw/workspace`. Контейнер `data-init` перед стартом копирует их агенту и убирает ритуал первого запуска `BOOTSTRAP.md`. После правок: `docker compose up -d`, затем `set-identity` из раздела «OpenClaw», и `/new` боту.
