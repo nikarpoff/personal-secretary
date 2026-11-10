@@ -2,8 +2,8 @@
 # CI/CD: test → build на dev, delivery → deploy → release на релизном теге
 # =====================================================================
 #
-# Образы: GHCR, ghcr.io/<владелец>/<репозиторий>/{personal-assistant,openclaw}.
-# OpenClaw собирается штатным Dockerfile на Node 26; Basic Memory и Syncthing - готовые образы.
+# Образ: GHCR, ghcr.io/<владелец>/<репозиторий>/personal-assistant. OpenClaw, Basic Memory и Syncthing -
+# готовые образы, их версии задаёт .env на сервере.
 #
 #   пуш в dev       test → build: образы с тегами dev, sha-<коммит>, build-<N>
 #   пуш в main      ничего
@@ -46,7 +46,7 @@ permissions:
 
 env:
   # Образы этого репозитория; имя в GHCR - только строчными
-  IMAGE_NAMES: personal-assistant openclaw
+  IMAGE_NAMES: personal-assistant
   DEV_TAG: dev
 
 jobs:
@@ -86,18 +86,6 @@ jobs:
           - name: personal-assistant
             context: .
             dockerfile: Dockerfile
-          - name: openclaw
-            context: https://github.com/openclaw/openclaw.git#8b18b5578f66eab1501cba4cef2310d88bfb9a41
-            dockerfile: Dockerfile
-            build_args: |
-              GIT_COMMIT=8b18b5578f66eab1501cba4cef2310d88bfb9a41
-              OPENCLAW_DOCKER_BUILD_VERSION=2026.10.9
-              OPENCLAW_EXTENSIONS=diagnostics-otel,codex
-              OPENCLAW_NODE_BOOKWORM_IMAGE=docker.io/library/node:26.12.1-bookworm@sha256:3b764117159bda01d2396391e7789b6a9106af9729cfd001ef55e98557868310
-              OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE=docker.io/library/node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c
-              OPENCLAW_NODE_BOOKWORM_SLIM_DIGEST=sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c
-            labels: |
-              org.opencontainers.image.base.name=docker.io/library/node:26.12.1-bookworm-slim
     steps:
       - uses: actions/checkout@v5
 
@@ -127,14 +115,12 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
-          build-args: ${{ matrix.build_args }}
           push: true
           tags: ${{ steps.tags.outputs.list }}
           # source связывает пакет GHCR с репозиторием: видимость и доступ берутся от него
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-            ${{ matrix.labels }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -276,7 +262,6 @@ jobs:
               if [ -n "${!name}" ]; then echo "$name=${!name}"; fi
             done
             echo "PERSONAL_ASSISTANT_IMAGE=$prefix/personal-assistant:$TAG"
-            echo "OPENCLAW_RUNTIME_IMAGE=$prefix/openclaw:$TAG"
           } > deploy.env.new
           cat deploy.env.new
           ssh deploy "cat > '$DEPLOY_PATH/deploy.env.new'" < deploy.env.new

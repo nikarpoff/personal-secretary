@@ -30,14 +30,14 @@ services:
   # 2. отдаёт каталоги OpenClaw, заметок, Basic Memory и Syncthing пользователю uid 1000,
   #    от которого они работают: отсутствующий каталог Docker создаёт от root
   data-init:
-    image: ${OPENCLAW_IMAGE:-${OPENCLAW_RUNTIME_IMAGE:-personal-openclaw:2026.10.9-node26.12.1}}
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.10.9}
     container_name: ${DATA_INIT_CONTAINER:-data-init}
     user: "0:0"
     entrypoint:
       - sh
       - -ec
       - |
-        mkdir -p /data/openclaw/workspace /data/openclaw/compile-cache /data/notes /data/basic-memory /data/syncthing
+        mkdir -p /data/openclaw/workspace /data/notes /data/basic-memory /data/syncthing
         cp /opt/personal-assistant/workspace/*.md /data/openclaw/workspace/
         rm -f /data/openclaw/workspace/BOOTSTRAP.md
         chown -R 1000:1000 /data/openclaw /data/notes /data/basic-memory /data/syncthing
@@ -94,19 +94,7 @@ services:
   # Команды OpenClaw: scripts/openclaw.sh <команда>
   openclaw-gateway:
     container_name: ${OPENCLAW_GATEWAY_CONTAINER:-openclaw-gateway}
-    image: ${OPENCLAW_IMAGE:-${OPENCLAW_RUNTIME_IMAGE:-personal-openclaw:2026.10.9-node26.12.1}}
-    # Штатный Dockerfile той же версии OpenClaw; зависимости собираются на Node 26 вместе с runtime.
-    build:
-      context: https://github.com/openclaw/openclaw.git#8b18b5578f66eab1501cba4cef2310d88bfb9a41
-      args:
-        GIT_COMMIT: 8b18b5578f66eab1501cba4cef2310d88bfb9a41
-        OPENCLAW_DOCKER_BUILD_VERSION: 2026.10.9
-        OPENCLAW_EXTENSIONS: diagnostics-otel,codex
-        OPENCLAW_NODE_BOOKWORM_IMAGE: docker.io/library/node:26.12.1-bookworm@sha256:3b764117159bda01d2396391e7789b6a9106af9729cfd001ef55e98557868310
-        OPENCLAW_NODE_BOOKWORM_SLIM_IMAGE: docker.io/library/node:26.12.1-bookworm-slim@sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c
-        OPENCLAW_NODE_BOOKWORM_SLIM_DIGEST: sha256:88e480776c6149ff1d098cd304f44bf18057fb5d284a3329b78162d29821e28c
-      labels:
-        org.opencontainers.image.base.name: docker.io/library/node:26.12.1-bookworm-slim
+    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.10.9}
     env_file: .env
     environment:
       HOME: /home/node
@@ -118,8 +106,6 @@ services:
       OPENCLAW_GATEWAY_PORT: "18789"
     volumes:
       - ./data/openclaw:/home/node/.openclaw
-      # Штатный кэш CLI и стартовых проверок переживает пересоздание контейнера.
-      - ./data/openclaw/compile-cache:/tmp/node-compile-cache
       # Навык из репозитория внутри рабочего каталога: read видит только его (tools.fs.workspaceOnly)
       - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:
@@ -143,8 +129,7 @@ services:
         condition: service_started
     restart: unless-stopped
     healthcheck:
-      # Тот же /healthz, что у штатной проверки, без запуска Node каждые 30 секунд
-      test: ["CMD", "curl", "-fsS", "--noproxy", "*", "-o", "/dev/null", "http://127.0.0.1:18789/healthz"]
+      test: ["CMD", "node", "dist/docker-healthcheck.js"]
       interval: 30s
       # На небольшом сервере шлюз стартует около минуты, а проверка под нагрузкой идёт дольше 5 секунд
       timeout: 15s

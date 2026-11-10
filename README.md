@@ -59,12 +59,11 @@ cp .env.example .env      # заполните все <change_me>
 
 ### 3. OpenClaw
 
-При деплое из CI `scripts/deploy.sh up` делает всё это сам: онбординг, если конфига ещё нет, плагин поиска, патч, имя агента и утреннюю сводку. Образы backend и OpenClaw собираются в CI и скачиваются из GHCR; на сервере сборка не нужна. Вручную - для запуска без CI.
+При деплое из CI `scripts/deploy.sh up` делает всё это сам: онбординг, если конфига ещё нет, плагин поиска, патч, имя агента и утреннюю сводку. На новом сервере OpenClaw собирается из `.env` и репозитория без ручных шагов. Вручную - для запуска без CI.
 
 Команды OpenClaw выполняет `scripts/openclaw.sh`: в работающем шлюзе через `docker compose exec`, до первого запуска - разовым контейнером.
 
 ```bash
-docker compose build openclaw-gateway
 scripts/openclaw.sh onboard --non-interactive --accept-risk \
   --mode local --no-install-daemon --skip-bootstrap --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
   --auth-choice openrouter-api-key --secret-input-mode ref \
@@ -73,13 +72,10 @@ scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin
 scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5     # Applied N config update(s)
 scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
 
-docker compose build personal-assistant
-docker compose up -d --no-build
+docker compose up -d --build
 scripts/openclaw.sh mcp probe personal-assistant      # 4 tools
 scripts/openclaw.sh mcp probe notes                   # 8 tools
 ```
-
-Шлюз и `data-init` используют один образ. Локально это `personal-openclaw:2026.10.9-node26.12.1`, собранный по официальному Dockerfile из закреплённого коммита OpenClaw. Для готового образа задайте `OPENCLAW_IMAGE` в `.env` и вместо сборки выполните `docker compose pull openclaw-gateway`.
 
 Ключи OpenRouter и Whisper и токен шлюза остаются в `.env`: онбординг и патч пишут в конфиг OpenClaw только ссылки на них.
 
@@ -157,12 +153,6 @@ scripts/openclaw.sh dashboard --no-open          # одноразовая ссы
 
 Ссылка входит и одобряет браузер как устройство владельца. При входе по `OPENCLAW_GATEWAY_TOKEN` устройство одобряют командами `devices list` и `devices approve <id>`.
 
-## Память OpenClaw
-
-OpenClaw 2026.10.9 собирается на [рекомендованном Node 26](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/install/node-compatibility.md). Штатный CLI сохраняет кэш байткода в `data/openclaw/compile-cache`, healthcheck использует `curl`. Патч запрещает девять перечисленных плагинов и снимает прежние ограничения остальных функций. Лимитов RAM и параллелизма нет.
-
-Изменения применяет `scripts/deploy.sh up`. Расход RAM проверяют через `docker compose stats --no-stream openclaw-gateway` при одинаковой нагрузке; кэш ускоряет повторные запуски, но не гарантирует снижение постоянного расхода RAM.
-
 ## Личность агента
 
 Имя, характер и правила - `openclaw/workspace`. Контейнер `data-init` перед стартом копирует их агенту и убирает ритуал первого запуска `BOOTSTRAP.md`. После правок: `docker compose up -d`, затем `set-identity` из раздела «OpenClaw», и `/new` боту.
@@ -210,8 +200,8 @@ uv run fastapi dev app/main.py
 - Один календарь и один владелец.
 - В Whisper уходят только `model`, `language` и файл: нестандартные параметры сервиса задаются его значениями по умолчанию. Whisper во внутренней сети требует `models.providers.openai.request.allowPrivateNetwork: true` в патче.
 - Текст заметок уходит эмбеддеру (OpenRouter или ваш сервис), как и разговоры - модели.
-- Исходники OpenClaw (2026.10.9), Node (26.12.1), Basic Memory (1.0.0) и Syncthing (2.1.7) закреплены в `compose.yml`; готовые образы переопределяют `OPENCLAW_IMAGE`, `BASIC_MEMORY_IMAGE`, `SYNCTHING_IMAGE` в `.env`.
+- Версии OpenClaw (2026.10.9), Basic Memory (1.0.0) и Syncthing (2.1.7) закреплены в `compose.yml`; другую задают `OPENCLAW_IMAGE`, `BASIC_MEMORY_IMAGE`, `SYNCTHING_IMAGE` в `.env`.
 
 ## CI/CD
 
-Пуш в `dev` прогоняет тесты и собирает образы backend и OpenClaw в GHCR, релизный тег `X.Y.Z` выкатывает последний билд `dev` на сервер по SSH и публикует GitHub Release. Настройка окружения и первый деплой - [docs/ci-cd.md](docs/ci-cd.md).
+Пуш в `dev` прогоняет тесты и собирает образ в GHCR, релизный тег `X.Y.Z` выкатывает последний билд `dev` на сервер по SSH и публикует GitHub Release. Настройка окружения и первый деплой - [docs/ci-cd.md](docs/ci-cd.md).
