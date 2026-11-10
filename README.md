@@ -59,11 +59,12 @@ cp .env.example .env      # заполните все <change_me>
 
 ### 3. OpenClaw
 
-При деплое из CI `scripts/deploy.sh up` делает всё это сам: онбординг, если конфига ещё нет, плагин поиска, патч, имя агента и утреннюю сводку. На новом сервере OpenClaw собирается из `.env` и репозитория без ручных шагов. Вручную - для запуска без CI.
+При деплое из CI `scripts/deploy.sh up` делает всё это сам: онбординг, если конфига ещё нет, плагин поиска, патч, имя агента и утреннюю сводку. Образы backend и OpenClaw собираются в CI и скачиваются из GHCR; на сервере сборка не нужна. Вручную - для запуска без CI.
 
 Команды OpenClaw выполняет `scripts/openclaw.sh`: в работающем шлюзе через `docker compose exec`, до первого запуска - разовым контейнером.
 
 ```bash
+docker compose build openclaw-gateway
 scripts/openclaw.sh onboard --non-interactive --accept-risk \
   --mode local --no-install-daemon --skip-bootstrap --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
   --auth-choice openrouter-api-key --secret-input-mode ref \
@@ -72,10 +73,13 @@ scripts/openclaw.sh plugins install @openclaw/duckduckgo-plugin
 scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5     # Applied N config update(s)
 scripts/openclaw.sh agents set-identity --agent main --workspace /home/node/.openclaw/workspace --from-identity
 
-docker compose up -d --build
+docker compose build personal-assistant
+docker compose up -d --no-build
 scripts/openclaw.sh mcp probe personal-assistant      # 4 tools
 scripts/openclaw.sh mcp probe notes                   # 8 tools
 ```
+
+Шлюз и `data-init` используют один образ. Локально это `personal-openclaw:2026.10.9-node26.12.1`, собранный по официальному Dockerfile из закреплённого коммита OpenClaw. Для готового образа задайте `OPENCLAW_IMAGE` в `.env` и вместо сборки выполните `docker compose pull openclaw-gateway`.
 
 Ключи OpenRouter и Whisper и токен шлюза остаются в `.env`: онбординг и патч пишут в конфиг OpenClaw только ссылки на них.
 
@@ -155,22 +159,30 @@ scripts/openclaw.sh dashboard --no-open          # одноразовая ссы
 
 ## Память OpenClaw
 
-В патче через штатный [`plugins.deny`](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/tools/plugin.md) отключены `cua-computer`, `linux-node`, `device-pair`, `github`, `geolocation`, `talk-voice`, `anthropic`, `xai` и `ollama`. Их код не загружается, файлы образа остаются на месте. Модель через OpenRouter, Telegram, Whisper, веб-поиск, MCP и встроенная память сохраняются. `device-pair` отвечает за подключение устройств из чата; вход в Control UI и CLI-команды `devices` от него не зависят.
+OpenClaw 2026.10.9 собирается на Node 26.12.1. Эта ветка [рекомендована самим OpenClaw](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/install/node-compatibility.md) для меньшего расхода памяти и быстрого старта. В [замере upstream](https://github.com/openclaw/openclaw/pull/114399) переход с Node 24.18 на 26.5 снизил RSS шлюза с 996 до 684 МБ при сопоставимой скорости HTTP/WS. Это результат другого стенда, а не замер этого проекта; исходники OpenClaw здесь остаются на прежней версии.
 
-Healthcheck обращается к штатному `/healthz` через уже установленный в образе `curl`, без отдельного Node-процесса каждые 30 секунд. Лимитов памяти и изменений параллелизма нет.
+В конфигурации используются штатные механизмы:
+
+- [`plugins.allow` и `plugins.deny`](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/tools/plugin.md) оставляют плагины чата, модели, Whisper, веб-поиска и чтения, памяти, документов, браузера и Canvas. Девять неиспользуемых плагинов явно запрещены в патче. Control UI, история и автоматическое вспоминание прошлых бесед сохраняются.
+- Выключены ночная консолидация в `MEMORY.md` и дополнительный LLM-вызов перед compaction для записи файлов памяти: заметки ведёт Basic Memory, а `write` у агента запрещён. Сама compaction, поиск по беседам и `intent` остаются.
+- MCP освобождает соединения и каталоги инструментов сессий после часа без обращений. Активные вызовы защищены от очистки; первый запрос после простоя заново подключает серверы.
+- Healthcheck проверяет `/healthz` через установленный в образе `curl`, без отдельного Node-процесса каждые 30 секунд.
+
+Лимитов RAM и изменений параллелизма нет. Параметры поиска, история, заметки и голосовые сохраняются.
 
 При деплое изменения применяет `scripts/deploy.sh up`. Для уже работающего шлюза без CI:
 
 ```bash
+docker compose build openclaw-gateway
 scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
-docker compose up -d --no-deps openclaw-gateway
+docker compose up -d --no-build --no-deps openclaw-gateway
 scripts/openclaw.sh plugins list
 scripts/openclaw.sh mcp probe personal-assistant
 scripts/openclaw.sh mcp probe notes
 docker compose stats --no-stream openclaw-gateway
 ```
 
-Расход RAM сравнивайте до и после при одинаковой нагрузке, после прогрева и нескольких сообщений, включая голосовое, поиск и работу с заметками. Отключение плагинов сокращает загружаемый код; размер экономии зависит от того, какие из них были активны. Само по себе это не подтверждает устранение возможной утечки при долгой работе.
+Расход RAM сравнивайте до и после при одинаковой нагрузке, после прогрева и нескольких сообщений, включая голосовое, поиск и работу с заметками. Проверки конфигурации не заменяют замер памяти работающего шлюза.
 
 ## Личность агента
 
@@ -219,8 +231,8 @@ uv run fastapi dev app/main.py
 - Один календарь и один владелец.
 - В Whisper уходят только `model`, `language` и файл: нестандартные параметры сервиса задаются его значениями по умолчанию. Whisper во внутренней сети требует `models.providers.openai.request.allowPrivateNetwork: true` в патче.
 - Текст заметок уходит эмбеддеру (OpenRouter или ваш сервис), как и разговоры - модели.
-- Версии OpenClaw (2026.10.9), Basic Memory (1.0.0) и Syncthing (2.1.7) закреплены в `compose.yml`; другую задают `OPENCLAW_IMAGE`, `BASIC_MEMORY_IMAGE`, `SYNCTHING_IMAGE` в `.env`.
+- Исходники OpenClaw (2026.10.9), Node (26.12.1), Basic Memory (1.0.0) и Syncthing (2.1.7) закреплены в `compose.yml`; готовые образы переопределяют `OPENCLAW_IMAGE`, `BASIC_MEMORY_IMAGE`, `SYNCTHING_IMAGE` в `.env`.
 
 ## CI/CD
 
-Пуш в `dev` прогоняет тесты и собирает образ в GHCR, релизный тег `X.Y.Z` выкатывает последний билд `dev` на сервер по SSH и публикует GitHub Release. Настройка окружения и первый деплой - [docs/ci-cd.md](docs/ci-cd.md).
+Пуш в `dev` прогоняет тесты и собирает образы backend и OpenClaw в GHCR, релизный тег `X.Y.Z` выкатывает последний билд `dev` на сервер по SSH и публикует GitHub Release. Настройка окружения и первый деплой - [docs/ci-cd.md](docs/ci-cd.md).

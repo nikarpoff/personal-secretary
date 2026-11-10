@@ -7,8 +7,8 @@
 set -eu
 cd "$(dirname "$0")/.."
 
-# Образ, который собирает CI; OpenClaw, Basic Memory и Syncthing - на версиях, закреплённых в compose.yml
-IMAGE_KEYS="PERSONAL_ASSISTANT_IMAGE"
+# Образы, которые собирает CI; Basic Memory и Syncthing - на версиях, закреплённых в compose.yml
+IMAGE_KEYS="PERSONAL_ASSISTANT_IMAGE OPENCLAW_RUNTIME_IMAGE"
 HEALTH_ATTEMPTS=100
 HEALTH_DELAY=3
 
@@ -65,8 +65,11 @@ deliver() {
     docker login ghcr.io -u "$REGISTRY_USER" --password-stdin >/dev/null
     trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
   fi
-  # Только свой образ: pull всего проекта молча обновил бы OpenClaw и остальных с тегом latest
+  # Только свои образы: pull всего проекта молча обновил бы сторонние с тегом latest
   docker compose pull personal-assistant
+  if [ -n "${OPENCLAW_RUNTIME_IMAGE:-}" ]; then
+    docker pull "$OPENCLAW_RUNTIME_IMAGE"
+  fi
 }
 
 up() {

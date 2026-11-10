@@ -14,23 +14,32 @@ GitHub Actions (`.github/workflows/ci-cd.yml`) проверяет и собир�
 
 1. **test** запускает `uv run pytest` на раннере GitHub. Сборка начинается, только если тесты прошли,
    поэтому тег `dev` всегда указывает на проверенный билд.
-2. **build** собирает образ `personal-assistant` и публикует его в GHCR:
-   `ghcr.io/nikarpoff/personal-secretary/personal-assistant`.
-3. **delivery** на релизном теге ничего не собирает. Он вешает версию на текущий образ `dev`
-   и предупреждает, если тот собран не из коммита тега. Затем копирует в `DEPLOY_PATH`
+2. **build** собирает два образа и публикует их в GHCR:
+   `ghcr.io/nikarpoff/personal-secretary/personal-assistant` и
+   `ghcr.io/nikarpoff/personal-secretary/openclaw`. OpenClaw 2026.10.9 собирается по официальному
+   Dockerfile из закреплённого коммита на Node 26.12.1; образы Node закреплены digest в `compose.yml`.
+3. **delivery** на релизном теге ничего не собирает. Он вешает версию на текущие образы `dev`
+   и предупреждает, если они собраны не из коммита тега. Затем копирует в `DEPLOY_PATH`
    `compose.yml`, `scripts/`, `openclaw/` и `.env.example`, пишет `deploy.env`
    (образы, имена контейнеров, порты, проект compose), входит в GHCR токеном запуска и скачивает
-   только свой образ. OpenClaw, Basic Memory и Syncthing остаются на версиях из `.env`.
-4. **deploy** выполняет `docker compose up -d --force-recreate` и ждёт `healthy` у backend.
-   Если OpenClaw уже настроен (`data/openclaw/openclaw.json`), deploy применяет
-   `openclaw/openclaw.patch.json5` и ждёт шлюз.
+   оба образа. Сборок на сервере нет; Basic Memory и Syncthing остаются на закреплённых версиях.
+4. **deploy** пересоздаёт контейнеры и ждёт `healthy` у backend. При остановленном шлюзе
+   выполняет онбординг, если конфига ещё нет, устанавливает плагин поиска, применяет
+   `openclaw/openclaw.patch.json5` и личность агента. Затем запускает шлюз, ждёт его `healthy`
+   и объявляет утреннюю сводку.
 5. **release** ставит `latest` на образы финальной версии (кандидатам не ставит) и создаёт
    GitHub Release. В заметки идут текст аннотированного тега, список образов и сгенерированный
    список изменений. К релизу прикладывается архив с файлами для развёртывания.
 
-Версия вешается один раз. Если образ с тегом версии уже есть в GHCR, delivery выкатывает его
+Версия вешается один раз. Если образы с тегом версии уже есть в GHCR, delivery выкатывает их
 как есть. Поэтому Re-run запуска тега повторяет деплой той же версии, а Re-run запуска старого
 тега откатывает на неё.
+
+CI записывает образ OpenClaw в `OPENCLAW_RUNTIME_IMAGE` в `deploy.env`; шлюз и `data-init`
+используют его вместе. Явный `OPENCLAW_IMAGE` в `.env` имеет приоритет: для перехода на образ
+из CI удалите старое переопределение. При локальном запуске без CI образ
+`personal-openclaw:2026.10.9-node26.12.1` предварительно собирают командой
+`docker compose build openclaw-gateway` из README.
 
 ## Настройка
 
@@ -80,9 +89,7 @@ Required reviewers и ограничить окружение тегами.
 1. Подготовьте сервер: Docker Compose 2.24+, пользователь деплоя в группе `docker`. Токен Google
    получите по README и положите в секрет `GOOGLE_CREDENTIALS` или вручную в `DEPLOY_PATH/secrets/google.json`.
 2. Запушьте `dev`, дождитесь сборки и поставьте релизный тег. Delivery остановится, если на сервере нет `.env` и не задан `DOTENV`.
-3. Deploy поднимет backend и предупредит, что OpenClaw не настроен. Выполните на сервере
-   onboard и установку плагина из README (`scripts/openclaw.sh ...` в `DEPLOY_PATH`), затем
-   сделайте Re-run запуска тега. Дальше патч конфига применяется сам.
+3. Deploy сам настроит OpenClaw и утреннюю сводку, запустит шлюз и дождётся его готовности.
 
 `scripts/openclaw.sh` читает `deploy.env`, поэтому на сервере команды OpenClaw работают с
 проектом и контейнерами из CI. Сам `deploy.env` правит только CI: следующий деплой его
