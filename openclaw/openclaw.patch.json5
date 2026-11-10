@@ -93,6 +93,7 @@
     },
   },
   plugins: {
+    deny: ["cua-computer", "linux-node", "device-pair", "github", "geolocation", "talk-voice", "anthropic", "xai", "ollama"],
     entries: {
       duckduckgo: {
         enabled: true,
