@@ -37,7 +37,7 @@ services:
       - sh
       - -ec
       - |
-        mkdir -p /data/openclaw/workspace /data/notes /data/basic-memory /data/syncthing
+        mkdir -p /data/openclaw/workspace /data/openclaw/compile-cache /data/notes /data/basic-memory /data/syncthing
         cp /opt/personal-assistant/workspace/*.md /data/openclaw/workspace/
         rm -f /data/openclaw/workspace/BOOTSTRAP.md
         chown -R 1000:1000 /data/openclaw /data/notes /data/basic-memory /data/syncthing
@@ -118,6 +118,8 @@ services:
       OPENCLAW_GATEWAY_PORT: "18789"
     volumes:
       - ./data/openclaw:/home/node/.openclaw
+      # Штатный кэш CLI и стартовых проверок переживает пересоздание контейнера.
+      - ./data/openclaw/compile-cache:/tmp/node-compile-cache
       # Навык из репозитория внутри рабочего каталога: read видит только его (tools.fs.workspaceOnly)
       - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
     cap_drop:

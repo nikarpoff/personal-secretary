@@ -2,6 +2,7 @@
 // Секретов и личных данных здесь нет: ${VAR} OpenClaw подставляет из окружения шлюза (.env)
 // при каждой загрузке конфига, поэтому файл лежит в git как есть.
 //   scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
+// null снимает прежнее переопределение, возвращая штатное поведение OpenClaw.
 {
   agents: {
     defaults: {
@@ -12,9 +13,7 @@
       // Heartbeat выключен: без HEARTBEAT.md он каждые 30 минут гонял весь контекст сессии впустую,
       // а напоминания о событиях присылает сам сервис
       heartbeat: { every: "0m" },
-      // Перед compaction OpenClaw отдельно вызывает LLM, чтобы записать файлы памяти.
-      // write у агента запрещён; заметки сохраняются через MCP, обычная compaction остаётся.
-      compaction: { memoryFlush: { enabled: false } },
+      compaction: { memoryFlush: { enabled: null } },
     },
   },
   models: {
@@ -96,17 +95,12 @@
     },
   },
   plugins: {
-    // Только владельцы используемых возможностей: чат, модель, голосовые, веб, память и Control UI.
-    // Одного tools.profile недостаточно: он скрывает инструменты, но не запрещает загрузку плагинов.
-    allow: ["telegram", "openrouter", "openai", "duckduckgo", "web-readability", "memory-core", "active-memory", "document-extract", "browser", "canvas"],
-    // Не загружаем неиспользуемые плагины, даже если onboard включил их в entries.
-    // Модель через OpenRouter и распознавание Whisper используют openrouter и openai.
+    allow: null,
+    // Запрещены только перечисленные владельцем плагины; OpenRouter и Whisper остаются.
     deny: ["cua-computer", "linux-node", "device-pair", "github", "geolocation", "talk-voice", "anthropic", "xai", "ollama"],
     entries: {
       "memory-core": {
-        // Ночную консолидацию в MEMORY.md не используем: заметки ведёт Basic Memory.
-        // Сам плагин, индекс бесед, recall и intent остаются доступны.
-        config: { dreaming: { enabled: false } },
+        config: { dreaming: { enabled: null } },
       },
       duckduckgo: {
         enabled: true,
@@ -121,9 +115,7 @@
     },
   },
   mcp: {
-    // Освобождаем транспорты и каталоги инструментов сессий после часа без обращений.
-    // Активные вызовы сохраняются; при следующем обращении соединения создаются заново.
-    sessionIdleTtlMs: 3600000,
+    sessionIdleTtlMs: null,
     servers: {
       // Календарь; ключ тот же, что AUTH_TOKEN сервиса
       "personal-assistant": {

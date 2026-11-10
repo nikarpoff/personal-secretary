@@ -159,30 +159,9 @@ scripts/openclaw.sh dashboard --no-open          # одноразовая ссы
 
 ## Память OpenClaw
 
-OpenClaw 2026.10.9 собирается на Node 26.12.1. Эта ветка [рекомендована самим OpenClaw](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/install/node-compatibility.md) для меньшего расхода памяти и быстрого старта. В [замере upstream](https://github.com/openclaw/openclaw/pull/114399) переход с Node 24.18 на 26.5 снизил RSS шлюза с 996 до 684 МБ при сопоставимой скорости HTTP/WS. Это результат другого стенда, а не замер этого проекта; исходники OpenClaw здесь остаются на прежней версии.
+OpenClaw 2026.10.9 собирается на [рекомендованном Node 26](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/install/node-compatibility.md). Штатный CLI сохраняет кэш байткода в `data/openclaw/compile-cache`, healthcheck использует `curl`. Патч запрещает девять перечисленных плагинов и снимает прежние ограничения остальных функций. Лимитов RAM и параллелизма нет.
 
-В конфигурации используются штатные механизмы:
-
-- [`plugins.allow` и `plugins.deny`](https://github.com/openclaw/openclaw/blob/v2026.10.9/docs/tools/plugin.md) оставляют плагины чата, модели, Whisper, веб-поиска и чтения, памяти, документов, браузера и Canvas. Девять неиспользуемых плагинов явно запрещены в патче. Control UI, история и автоматическое вспоминание прошлых бесед сохраняются.
-- Выключены ночная консолидация в `MEMORY.md` и дополнительный LLM-вызов перед compaction для записи файлов памяти: заметки ведёт Basic Memory, а `write` у агента запрещён. Сама compaction, поиск по беседам и `intent` остаются.
-- MCP освобождает соединения и каталоги инструментов сессий после часа без обращений. Активные вызовы защищены от очистки; первый запрос после простоя заново подключает серверы.
-- Healthcheck проверяет `/healthz` через установленный в образе `curl`, без отдельного Node-процесса каждые 30 секунд.
-
-Лимитов RAM и изменений параллелизма нет. Параметры поиска, история, заметки и голосовые сохраняются.
-
-При деплое изменения применяет `scripts/deploy.sh up`. Для уже работающего шлюза без CI:
-
-```bash
-docker compose build openclaw-gateway
-scripts/openclaw.sh config patch --stdin < openclaw/openclaw.patch.json5
-docker compose up -d --no-build --no-deps openclaw-gateway
-scripts/openclaw.sh plugins list
-scripts/openclaw.sh mcp probe personal-assistant
-scripts/openclaw.sh mcp probe notes
-docker compose stats --no-stream openclaw-gateway
-```
-
-Расход RAM сравнивайте до и после при одинаковой нагрузке, после прогрева и нескольких сообщений, включая голосовое, поиск и работу с заметками. Проверки конфигурации не заменяют замер памяти работающего шлюза.
+Изменения применяет `scripts/deploy.sh up`. Расход RAM проверяют через `docker compose stats --no-stream openclaw-gateway` при одинаковой нагрузке; кэш ускоряет повторные запуски, но не гарантирует снижение постоянного расхода RAM.
 
 ## Личность агента
 

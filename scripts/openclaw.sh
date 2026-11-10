@@ -13,9 +13,8 @@ if [ -f deploy.env ]; then
   set +a
 fi
 
-
 if [ -n "$(docker compose ps --status running -q openclaw-gateway)" ]; then
-  exec docker compose exec -T openclaw-gateway node dist/index.js "$@"
+  exec docker compose exec -T openclaw-gateway node --disable-warning=ExperimentalWarning openclaw.mjs "$@"
 fi
 
 # Каталог состояния должен принадлежать node (uid 1000), иначе EACCES.
@@ -24,4 +23,4 @@ if ! docker compose run --rm --no-deps -T data-init </dev/null >/dev/null 2>&1; 
   echo "Не удалось подготовить data/: docker compose run --rm data-init" >&2
   exit 1
 fi
-exec docker compose run --rm --no-deps -T --entrypoint node openclaw-gateway dist/index.js "$@"
+exec docker compose run --rm --no-deps -T --entrypoint node openclaw-gateway --disable-warning=ExperimentalWarning openclaw.mjs "$@"
