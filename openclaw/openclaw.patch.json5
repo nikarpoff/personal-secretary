@@ -48,7 +48,7 @@
     // Секретарю не нужны shell и запись файлов: приглашение в календарь или веб-страница могут нести
     // prompt injection. messaging пропускает MCP-инструменты, read читает навык, веб - только поиск и чтение
     profile: "messaging",
-    alsoAllow: ["read", "web_search", "web_fetch"],
+    alsoAllow: ["read", "web_search", "web_fetch", "news_settings", "news_sources", "news_collect", "news_publish", "news_history"],
     // read видит только рабочий каталог агента; навык смонтирован в него из репозитория
     fs: { workspaceOnly: true },
     elevated: { enabled: false },
@@ -93,8 +93,17 @@
     },
   },
   plugins: {
+    load: { paths: ["/opt/personal-secretary/news-digest"] },
     deny: ["cua-computer", "linux-node", "device-pair", "github", "geolocation", "talk-voice", "anthropic", "xai", "ollama"],
     entries: {
+      "news-digest": {
+        enabled: true,
+        config: {
+          ownerId: "${TELEGRAM_CHAT_ID}",
+          cliPath: "/app/dist/index.js",
+          blogwatcherPath: "/home/node/.openclaw/bin/blogwatcher",
+        },
+      },
       duckduckgo: {
         enabled: true,
         config: { webSearch: { safeSearch: "moderate" } },

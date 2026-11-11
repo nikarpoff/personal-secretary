@@ -30,14 +30,17 @@ services:
   # 2. отдаёт каталоги OpenClaw, заметок, Basic Memory и Syncthing пользователю uid 1000,
   #    от которого они работают: отсутствующий каталог Docker создаёт от root
   data-init:
-    image: ${OPENCLAW_IMAGE:-ghcr.io/openclaw/openclaw:2026.10.9}
+    image: ${PERSONAL_ASSISTANT_IMAGE:-personal-assistant:latest}
     container_name: ${DATA_INIT_CONTAINER:-data-init}
     user: "0:0"
+    command: []
     entrypoint:
       - sh
       - -ec
       - |
-        mkdir -p /data/openclaw/workspace /data/notes /data/basic-memory /data/syncthing
+        mkdir -p /data/openclaw/bin /data/openclaw/workspace /data/notes /data/basic-memory /data/syncthing
+        cp /usr/local/bin/blogwatcher /data/openclaw/bin/blogwatcher
+        chmod 755 /data/openclaw/bin/blogwatcher
         cp /opt/personal-assistant/workspace/*.md /data/openclaw/workspace/
         rm -f /data/openclaw/workspace/BOOTSTRAP.md
         chown -R 1000:1000 /data/openclaw /data/notes /data/basic-memory /data/syncthing
@@ -108,6 +111,8 @@ services:
       - ./data/openclaw:/home/node/.openclaw
       # Навык из репозитория внутри рабочего каталога: read видит только его (tools.fs.workspaceOnly)
       - ./openclaw/skills/secretary:/home/node/.openclaw/workspace/skills/secretary:ro
+      - ./openclaw/extensions/news-digest:/opt/personal-secretary/news-digest:ro
+      - ./openclaw/extensions/news-digest/skills/news-digest:/home/node/.openclaw/workspace/skills/news-digest:ro
     cap_drop:
       - NET_RAW
       - NET_ADMIN
