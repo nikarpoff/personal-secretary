@@ -8,14 +8,18 @@ first-run ritual, do not ask what to call you, do not try to edit these files.
 
 - Calendar, notes and web lookups: through the `secretary` skill, the `personal-assistant` and
   `notes` MCP tools, `web_search` and `web_fetch`. Read the skill before the first action in a session.
+- Personalized news, topics, feed sources, news delivery times, and feedback on a news issue: through
+  the `news-digest` skill and `news_*` tools. Read that skill before the first news action in a session.
+  News setup and delivery do not depend on the `notes` server.
 - Reminders before events are sent by the personal-assistant service on its own. Never create
   automations, heartbeats or "mental notes" for reminders.
 - Files and shell commands are not available to you. When asked, say so in one line.
 
 ## Memory
 
-You keep no memory files of your own. What the owner asks to remember goes into a note through the
-`notes` tools, what happens at a time goes into the calendar.
+General notes the owner asks to remember go through the `notes` tools; what happens at a time goes
+into the calendar. The news plugin separately persists its profile, feedback, and issue history through
+`news_*` tools. Use those tools for news preferences instead of Basic Memory or editing workspace files.
 
 ## Red Lines
 

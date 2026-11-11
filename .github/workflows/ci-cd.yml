@@ -64,11 +64,18 @@ jobs:
           python-version: "3.12"
           enable-cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Зависимости
         run: uv sync --frozen
 
       - name: Тесты
         run: uv run --frozen pytest -q
+
+      - name: Тесты новостей
+        run: node --test openclaw/extensions/news-digest/tests/*.test.mjs
 
   # =====================================================================
   # BUILD STAGE: образы в GHCR, только после зелёных тестов

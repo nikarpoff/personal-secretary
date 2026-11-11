@@ -1,3 +1,7 @@
+FROM golang:1.24-alpine AS blogwatcher
+RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath -ldflags="-s -w" \
+    github.com/Hyaxia/blogwatcher/cmd/blogwatcher@v0.0.3
+
 # Use uv's official Docker image with Python
 FROM ghcr.io/astral-sh/uv:latest AS uv
 
@@ -6,6 +10,7 @@ FROM python:3.12-slim
 
 # Install uv from the uv image
 COPY --from=uv /uv /uvx /bin/
+COPY --from=blogwatcher /out/blogwatcher /usr/local/bin/blogwatcher
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \

@@ -64,6 +64,7 @@ cp .env.example .env      # заполните все <change_me>
 Команды OpenClaw выполняет `scripts/openclaw.sh`: в работающем шлюзе через `docker compose exec`, до первого запуска - разовым контейнером.
 
 ```bash
+docker compose build personal-assistant
 scripts/openclaw.sh onboard --non-interactive --accept-risk \
   --mode local --no-install-daemon --skip-bootstrap --skip-channels --skip-skills --skip-search --skip-health --skip-ui \
   --auth-choice openrouter-api-key --secret-input-mode ref \
@@ -95,6 +96,23 @@ scripts/openclaw.sh automations add --name "Утренняя сводка" \
   --message "Утренняя сводка по навыку secretary" \
   --announce --channel telegram --to <TELEGRAM_CHAT_ID>
 ```
+
+## Новости
+
+Напишите боту: «Настрой новости: Python и ИИ, без крипты, в 08:00 и 20:00 по Москве».
+Темы, источники, время и предпочтения меняются через чат. «Покажи пробный дайджест»
+показывает пример, «Включи новости» запускает рассылку, «Пауза новостей» отключает её.
+Обратную связь можно оставлять ответом на выпуск: «Вторая новость полезная, больше такого».
+
+Модуль работает внутри OpenClaw без Basic Memory. Данные сохраняются в
+`data/openclaw/workspace/news-digest`; обновление контейнера их не заменяет.
+
+Для другого инстанса с OpenClaw 2026.10.9 и blogwatcher v0.0.3 скопируйте
+`openclaw/extensions/news-digest` и выполните `openclaw plugins install -l /путь/news-digest`.
+Включите `plugins.entries.news-digest`, задайте `config.ownerId` — Telegram ID владельца,
+добавьте `news-digest` в `tools.alsoAllow`. В Docker задайте `config.cliPath: "/app/dist/index.js"`;
+вне Docker команда `openclaw` должна быть в PATH. При `tools.fs.workspaceOnly` скопируйте
+`skills/news-digest` из плагина в рабочий каталог агента `skills/news-digest`. Перезапустите шлюз.
 
 ## Заметки
 

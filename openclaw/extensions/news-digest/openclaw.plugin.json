@@ -1,0 +1,20 @@
+{
+  "id": "news-digest",
+  "name": "Personal news digest",
+  "description": "Personalized RSS news and owner feedback, using native OpenClaw schedules and blogwatcher.",
+  "skills": ["./skills"],
+  "contracts": {
+    "tools": ["news_settings", "news_sources", "news_collect", "news_publish", "news_history"]
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ownerId": { "type": "string", "pattern": "^[0-9]+$", "description": "Fixed Telegram owner user ID; defaults to TELEGRAM_CHAT_ID." },
+      "agentId": { "type": "string", "default": "main" },
+      "timezone": { "type": "string", "description": "Initial IANA timezone; later changes are stored in the news profile." },
+      "blogwatcherPath": { "type": "string", "default": "blogwatcher" },
+      "cliPath": { "type": "string", "description": "Absolute OpenClaw JS entrypoint. Omit to use the openclaw executable from PATH." }
+    }
+  }
+}
